@@ -5,6 +5,7 @@ on:
     branches:
       - main
     paths:
+      - ".github/workflows/deploy-cloud-function.yml"
       - "main.py"
       - "requirements.txt"
       - "tests/"
