@@ -24,7 +24,6 @@ AUDIT_DATASET_NAME = os.environ["AUDIT_DATASET_NAME"]
 LATENCY_PARAMS_TABLE = os.environ["LATENCY_PARAMS_TABLE"]
 
 
-# Add this new function to process a single dataset
 def process_dataset(
     client: bigquery.Client,
     project_name: str,
@@ -32,7 +31,16 @@ def process_dataset(
     latency_params_table: str,
     dataset: str,
 ) -> List[dict[str, Any]]:
-    cprint(f"Processing dataset: {dataset}", severity="DEBUG")
+    """
+    Process a single dataset for latency checks.
+
+    Args:
+        client: BigQuery client.
+        project_name: Name of the BigQuery project.
+        audit_dataset_name: Name of the audit dataset.
+        latency_params_table: Name of the latency parameters table.
+        dataset: Name of the dataset to process.
+    """
     dataset_query = LATENCY_CHECK_QUERY.format(
         project_name=project_name,
         audit_dataset_name=audit_dataset_name,
@@ -101,7 +109,7 @@ def get_latency_data(
             try:
                 results = future.result()
                 all_results.extend(results)
-                cprint(f"Processed dataset: {dataset} with {len(results)} tables")
+                cprint(f"Processed dataset: {dataset} with {len(results)} tables", severity="DEBUG")
             except Exception as exc:
                 cprint(f"Dataset {dataset} generated an exception: {exc}", severity="ERROR")
 
