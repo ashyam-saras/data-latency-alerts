@@ -13,20 +13,25 @@ on:
   workflow_dispatch:
     inputs:
       PROJECT_NAME:
-        description: 'GCP Project Name'
+        description: "GCP Project Name"
         required: false
+        default: "insightsprod"
       AUDIT_DATASET_NAME:
-        description: 'Audit Dataset Name'
+        description: "Audit Dataset Name"
         required: false
+        default: "edm_insights_metadata"
       LATENCY_PARAMS_TABLE:
-        description: 'Latency Parameters Table'
+        description: "Latency Parameters Table"
         required: false
+        default: "latency_alerts_params"
       SLACK_CHANNEL_ID:
-        description: 'Slack Channel ID'
+        description: "Slack Channel ID"
         required: false
+        default: "C065ZK13ZTJ"
       SLACK_API_TOKEN:
-        description: 'Slack API Token'
+        description: "Slack API Token"
         required: false
+        default: "xoxb-xxx-xxx"
 
 env:
   PROJECT_NAME: ${{ vars.PROJECT_NAME }}
