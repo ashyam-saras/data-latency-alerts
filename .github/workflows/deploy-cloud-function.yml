@@ -77,6 +77,6 @@ jobs:
           --source=. \
           --trigger-http \
           --runtime=python311 \
-          --entry-point=main \
+          --entry-point=latency_alert \
           --allow-unauthenticated \
           --set-env-vars PROJECT_NAME=$PROJECT_NAME,AUDIT_DATASET_NAME=$AUDIT_DATASET_NAME,LATENCY_PARAMS_TABLE=$LATENCY_PARAMS_TABLE,SLACK_CHANNEL_ID=$SLACK_CHANNEL_ID,SLACK_API_TOKEN=$SLACK_API_TOKEN
