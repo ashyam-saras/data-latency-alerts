@@ -1,0 +1,85 @@
+name: Deploy Cloud Scheduler
+
+on:
+  workflow_dispatch:
+    inputs:
+      SCHEDULE:
+        description: 'Cron schedule (e.g., "0 */6 * * *")'
+        required: false
+        default: "0 */6 * * *"
+      TIMEZONE:
+        description: 'Timezone (e.g., "America/New_York")'
+        required: false
+        default: "America/New_York"
+
+env:
+  PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+  SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+  SLACK_API_TOKEN: ${{ secrets.SLACK_API_TOKEN }}
+
+jobs:
+  deploy-scheduler:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - id: "auth"
+      uses: "google-github-actions/auth@v2"
+      with:
+        credentials_json: "${{ secrets.GCP_SA_KEY }}"
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+
+    - name: Check if job exists
+      id: check_job
+      run: |
+        if gcloud scheduler jobs list \
+          --project=${{ env.PROJECT_NAME }} \
+          --location=us-central1 \
+          --filter="name:data-latency-alerts-scheduler" \
+          --format="value(name)" | grep -q "data-latency-alerts-scheduler"; then
+          echo "job_exists=true" >> $GITHUB_OUTPUT
+          echo "Job exists"
+        else
+          echo "job_exists=false" >> $GITHUB_OUTPUT
+          echo "Job does not exist"
+        fi
+
+    - name: Create Cloud Scheduler Job
+      if: steps.check_job.outputs.job_exists == 'false'
+      run: |
+        gcloud scheduler jobs create http data-latency-alerts-scheduler \
+          --schedule="${{ github.event.inputs.SCHEDULE || '0 */6 * * *' }}" \
+          --time-zone="${{ github.event.inputs.TIMEZONE || 'America/New_York' }}" \
+          --uri="https://us-central1-${{ env.PROJECT_NAME }}.cloudfunctions.net/data-latency-alerts" \
+          --http-method=POST \
+          --attempt-deadline=3600s \
+          --headers="Content-Type=application/json" \
+          --message-body='{"channel_id": "${{ env.SLACK_CHANNEL_ID }}", "slack_token": "${{ env.SLACK_API_TOKEN }}"}' \
+          --project=${{ env.PROJECT_NAME }} \
+          --location=us-central1
+        echo "Cloud Scheduler job created successfully"
+
+    - name: Update Cloud Scheduler Job
+      if: steps.check_job.outputs.job_exists == 'true'
+      run: |
+        gcloud scheduler jobs update http data-latency-alerts-scheduler \
+          --schedule="${{ github.event.inputs.SCHEDULE || '0 */6 * * *' }}" \
+          --time-zone="${{ github.event.inputs.TIMEZONE || 'America/New_York' }}" \
+          --uri="https://us-central1-${{ env.PROJECT_NAME }}.cloudfunctions.net/data-latency-alerts" \
+          --http-method=POST \
+          --attempt-deadline=3600s \
+          --headers="Content-Type=application/json" \
+          --message-body='{"channel_id": "${{ env.SLACK_CHANNEL_ID }}", "slack_token": "${{ env.SLACK_API_TOKEN }}"}' \
+          --project=${{ env.PROJECT_NAME }} \
+          --location=us-central1
+        echo "Cloud Scheduler job updated successfully"
+
+    - name: Verify Scheduler Job
+      run: |
+        gcloud scheduler jobs describe data-latency-alerts-scheduler \
+          --project=${{ env.PROJECT_NAME }} \
+          --location=us-central1
