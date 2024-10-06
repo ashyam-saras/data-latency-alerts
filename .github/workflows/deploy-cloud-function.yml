@@ -74,6 +74,10 @@ jobs:
       run: |
         gcloud functions deploy data-latency-alerts \
           --region=us-central1 \
+          --memory=512M \
+          --timeout=3600 \
+          --concurrency=2 \
+          --max-instances=10 \
           --source=. \
           --trigger-http \
           --runtime=python311 \
