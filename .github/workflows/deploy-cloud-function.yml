@@ -76,7 +76,7 @@ jobs:
           --region=us-central1 \
           --memory=512M \
           --timeout=3600 \
-          --concurrency=2 \
+          --concurrency=1 \
           --max-instances=10 \
           --source=. \
           --trigger-http \
