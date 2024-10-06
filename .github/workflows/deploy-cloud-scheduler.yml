@@ -41,11 +41,8 @@ jobs:
     - name: Check if job exists
       id: check_job
       run: |
-        if gcloud scheduler jobs list \
-          --project=${{ env.PROJECT_NAME }} \
-          --location=us-central1 \
-          --filter="name:data-latency-alerts-scheduler" \
-          --format="value(name)" | grep -q "data-latency-alerts-scheduler"; then
+        JOB_EXISTS=$(gcloud scheduler jobs list --project=${{ env.PROJECT_NAME }} --location=us-central1 --format="value(name)" | grep -c "data-latency-alerts-scheduler" || true)
+        if [ "$JOB_EXISTS" -gt "0" ]; then
           echo "job_exists=true" >> $GITHUB_OUTPUT
           echo "Job exists"
         else
@@ -61,7 +58,7 @@ jobs:
           --time-zone="${{ github.event.inputs.TIMEZONE || 'America/New_York' }}" \
           --uri="https://us-central1-${{ env.PROJECT_NAME }}.cloudfunctions.net/data-latency-alerts" \
           --http-method=POST \
-          --attempt-deadline=3600s \
+          --attempt-deadline=1800s \
           --headers="Content-Type=application/json" \
           --message-body='{"channel_id": "${{ env.SLACK_CHANNEL_ID }}", "slack_token": "${{ env.SLACK_API_TOKEN }}"}' \
           --project=${{ env.PROJECT_NAME }} \
@@ -76,7 +73,7 @@ jobs:
           --time-zone="${{ github.event.inputs.TIMEZONE || 'America/New_York' }}" \
           --uri="https://us-central1-${{ env.PROJECT_NAME }}.cloudfunctions.net/data-latency-alerts" \
           --http-method=POST \
-          --attempt-deadline=3600s \
+          --attempt-deadline=1800s \
           --headers="Content-Type=application/json" \
           --message-body='{"channel_id": "${{ env.SLACK_CHANNEL_ID }}", "slack_token": "${{ env.SLACK_API_TOKEN }}"}' \
           --project=${{ env.PROJECT_NAME }} \
