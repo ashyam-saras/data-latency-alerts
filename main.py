@@ -2,11 +2,12 @@ import os
 
 import functions_framework
 from dotenv import load_dotenv
+from flask import Request, jsonify
 from google.cloud import bigquery
 
 import utils.slack as slack
 from utils.logging import cprint
-from utils.utils import get_request_params, process_data_latency
+from utils.utils import process_data_latency
 
 # Load environment variables
 load_dotenv()
@@ -22,18 +23,21 @@ TOKEN = os.environ["SLACK_API_TOKEN"]
 bigquery_client = bigquery.Client()
 
 
-@functions_framework.cloud_event
-def latency_alert(cloud_event):
+@functions_framework.http
+def latency_alert(request: Request):
     try:
-        request_params = get_request_params(cloud_event)
-        cprint(f"Request Params: {request_params}")
+        request_json = request.get_json(silent=True)
+        if not request_json:
+            raise ValueError("No JSON data provided in the request")
 
-        channel_id = request_params.get("channel_id") or SLACK_CHANNEL_ID
-        token = request_params.get("slack_token") or TOKEN
-        target_dataset = request_params.get("target_dataset")
+        channel_id = request_json.get("channel_id", SLACK_CHANNEL_ID)
+        token = request_json.get("slack_token", TOKEN)
+        target_dataset = request_json.get("target_dataset")
 
         if not channel_id:
             raise ValueError("Missing required parameter: channel_id")
+        if not token:
+            raise ValueError("Missing required parameter: slack_token")
 
         latency_data, df = process_data_latency(
             bigquery_client,
@@ -42,11 +46,15 @@ def latency_alert(cloud_event):
             LATENCY_PARAMS_TABLE,
             target_dataset,
         )
-        excel_filename = slack.write_to_excel(df, "latency_data.xlsx")
+        excel_filename = slack.write_to_excel(df, "/tmp/latency_data.xlsx")
         message = slack.generate_slack_message(latency_data, target_dataset)
         slack.send_slack_message(message, channel_id, token, [excel_filename])
 
         cprint("Data latency alert processed successfully")
+        return jsonify({"status": "success", "message": "Data latency alert processed successfully"}), 200
+    except ValueError as ve:
+        cprint(f"Validation error: {str(ve)}", severity="ERROR")
+        return jsonify({"status": "error", "message": str(ve)}), 400
     except Exception as e:
         cprint(f"Error in latency_alert function: {e}", severity="ERROR")
-        raise
+        return jsonify({"status": "error", "message": str(e)}), 500
