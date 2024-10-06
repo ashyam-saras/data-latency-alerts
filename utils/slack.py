@@ -6,7 +6,7 @@ import pandas as pd
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
-from utils import cprint
+from utils.logging import cprint
 
 
 def generate_slack_message(latency_data: list[dict[str, Any]], specific_dataset: Optional[str] = None) -> str:
@@ -73,7 +73,8 @@ def send_slack_message(message: str, channel_id: str, token: str, file_paths: li
 
         cprint("Message and files sent successfully")
     except SlackApiError as e:
-        cprint(f"Error sending Slack message: {e.response['error']}", severity="ERROR")
+        error_message = e.response['error'] if isinstance(e.response, dict) else str(e.response)
+        cprint(f"Error sending Slack message: {error_message}", severity="ERROR")
         raise
 
 

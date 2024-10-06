@@ -1,15 +1,12 @@
-import base64
-import json
 import os
 
 import functions_framework
-import pandas as pd
 from dotenv import load_dotenv
 from google.cloud import bigquery
 
-import utils.bigquery as bq
 import utils.slack as slack
-from utils import cprint
+from utils.logging import cprint
+from utils.utils import get_request_params, process_data_latency
 
 # Load environment variables
 load_dotenv()
@@ -25,20 +22,6 @@ TOKEN = os.environ["SLACK_API_TOKEN"]
 bigquery_client = bigquery.Client()
 
 
-def get_request_params(cloud_event):
-    try:
-        return json.loads(base64.b64decode(cloud_event.data["message"]["data"]).decode("utf-8"))
-    except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as e:
-        cprint(f"Error decoding message: {e}", severity="ERROR")
-        raise ValueError("Invalid message format") from e
-
-
-def process_data_latency(client, specific_dataset=None):
-    latency_data = bq.get_latency_data(client, PROJECT_NAME, AUDIT_DATASET_NAME, LATENCY_PARAMS_TABLE, specific_dataset)
-    df = pd.DataFrame(latency_data)
-    return latency_data, df
-
-
 @functions_framework.cloud_event
 def latency_alert(cloud_event):
     try:
@@ -52,7 +35,13 @@ def latency_alert(cloud_event):
         if not channel_id:
             raise ValueError("Missing required parameter: channel_id")
 
-        latency_data, df = process_data_latency(bigquery_client, target_dataset)
+        latency_data, df = process_data_latency(
+            bigquery_client,
+            PROJECT_NAME,
+            AUDIT_DATASET_NAME,
+            LATENCY_PARAMS_TABLE,
+            target_dataset,
+        )
         excel_filename = slack.write_to_excel(df, "latency_data.xlsx")
         message = slack.generate_slack_message(latency_data, target_dataset)
         slack.send_slack_message(message, channel_id, token, [excel_filename])
