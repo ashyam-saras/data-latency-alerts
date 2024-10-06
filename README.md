@@ -1,3 +1,6 @@
+[![Deploy Cloud Function](https://github.com/ashyam-saras/data-latency-alerts/actions/workflows/deploy-cloud-function.yml/badge.svg)](https://github.com/ashyam-saras/data-latency-alerts/actions/workflows/deploy-cloud-function.yml)
+[![Deploy Cloud Scheduler](https://github.com/ashyam-saras/data-latency-alerts/actions/workflows/deploy-cloud-scheduler.yml/badge.svg)](https://github.com/ashyam-saras/data-latency-alerts/actions/workflows/deploy-cloud-scheduler.yml)
+
 # Data Latency Alerts
 
 This project provides an automated system to monitor and alert about BigQuery tables that have not been updated within a specified timeframe. It helps data teams maintain data freshness and quickly identify potential issues in data pipelines.
