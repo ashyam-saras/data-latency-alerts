@@ -1,6 +1,11 @@
 name: Deploy Cloud Scheduler
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/deploy-cloud-scheduler.yml'
   workflow_dispatch:
     inputs:
       SCHEDULE:
