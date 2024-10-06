@@ -7,8 +7,8 @@ import pandas as pd
 from dotenv import load_dotenv
 from google.cloud import bigquery
 
-import bq_utils
-import slack_utils
+import utils.bigquery as bq
+import utils.slack as slack
 from utils import cprint
 
 # Load environment variables
@@ -34,7 +34,7 @@ def get_request_params(cloud_event):
 
 
 def process_data_latency(client, specific_dataset=None):
-    latency_data = bq_utils.get_latency_data(client, PROJECT_NAME, AUDIT_DATASET_NAME, LATENCY_PARAMS_TABLE, specific_dataset)
+    latency_data = bq.get_latency_data(client, PROJECT_NAME, AUDIT_DATASET_NAME, LATENCY_PARAMS_TABLE, specific_dataset)
     df = pd.DataFrame(latency_data)
     return latency_data, df
 
@@ -53,9 +53,9 @@ def latency_alert(cloud_event):
             raise ValueError("Missing required parameter: channel_id")
 
         latency_data, df = process_data_latency(bigquery_client, target_dataset)
-        excel_filename = slack_utils.write_to_excel(df, "latency_data.xlsx")
-        message = slack_utils.generate_slack_message(latency_data, target_dataset)
-        slack_utils.send_slack_message(message, channel_id, token, [excel_filename])
+        excel_filename = slack.write_to_excel(df, "latency_data.xlsx")
+        message = slack.generate_slack_message(latency_data, target_dataset)
+        slack.send_slack_message(message, channel_id, token, [excel_filename])
 
         cprint("Data latency alert processed successfully")
     except Exception as e:
