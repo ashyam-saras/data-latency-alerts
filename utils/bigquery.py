@@ -72,7 +72,7 @@ def get_latency_data(
 
     # Get the list of datasets from dataset_params
     dataset_query = f"""
-    SELECT dp.dataset, dp.exclude_list, dp.threshhold_hours
+    SELECT dp.dataset, dp.exclude_list, dp.threshold_hours
     FROM `{project_name}.{audit_dataset_name}.{latency_params_table}` dp
     JOIN `{project_name}.INFORMATION_SCHEMA.SCHEMATA` s
         ON dp.dataset = s.schema_name
