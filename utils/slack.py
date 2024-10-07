@@ -30,6 +30,12 @@ def generate_slack_message(latency_data: list[dict[str, Any]], specific_dataset:
     max_hours = max(row["hours_since_update"] for row in latency_data)
     avg_hours = sum(row["hours_since_update"] for row in latency_data) / total_tables
 
+    # Sort tables by hours_since_update in descending order
+    sorted_data = sorted(latency_data, key=lambda x: x["hours_since_update"], reverse=True)
+    
+    # Get the top 5 oldest tables
+    oldest_tables = sorted_data[:5]
+
     # Get current timestamp in IST
     now = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=5, minutes=30)))
     timestamp = now.strftime(r"%Y-%m-%d %H:%M:%S IST")
@@ -37,11 +43,16 @@ def generate_slack_message(latency_data: list[dict[str, Any]], specific_dataset:
     dataset_info = f"for dataset {specific_dataset} " if specific_dataset else ""
     message = (
         f"Data Latency Alert Summary {dataset_info}(as of {timestamp}):\n"
-        f"• Total outdated tables: {total_tables}\n"
-        f"• Most outdated table: {max_hours:.1f} hours\n"
-        f"• Average delay: {avg_hours:.1f} hours\n\n"
-        "Detailed report will be attached in the thread."
+        f"• Tables missing SLA: {total_tables}\n"
+        f"• Most outdated table: {max_hours:.0f} hours\n"
+        f"• Average delay: {avg_hours:.0f} hours\n\n"
+        "Top 5 oldest tables:\n"
     )
+
+    for table in oldest_tables:
+        message += f"• {table['schema']}.{table['table']}: {table['hours_since_update']:.0f} hours\n"
+
+    message += "\nDetailed report will be attached in the thread."
 
     cprint(f"Slack message: {message}")
     return message

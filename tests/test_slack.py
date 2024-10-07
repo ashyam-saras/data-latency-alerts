@@ -12,8 +12,8 @@ from utils.slack import generate_slack_message, send_slack_message, write_to_exc
 def sample_latency_data():
     """Fixture to provide sample latency data for testing."""
     return [
-        {"table": "table1", "hours_since_update": 5},
-        {"table": "table2", "hours_since_update": 10},
+        {"schema": "schema1", "table": "table1", "hours_since_update": 5},
+        {"schema": "schema1", "table": "table2", "hours_since_update": 10},
     ]
 
 
@@ -23,9 +23,12 @@ def test_generate_slack_message(sample_latency_data):
     Ensures correct formatting and content of the message.
     """
     message = generate_slack_message(sample_latency_data)
-    assert "Total outdated tables: 2" in message
-    assert "Most outdated table: 10.0 hours" in message
-    assert "Average delay: 7.5 hours" in message
+    assert "Tables missing SLA: 2" in message
+    assert "Most outdated table: 10 hours" in message
+    assert "Average delay: 8 hours" in message
+    assert "Top 5 oldest tables:" in message
+    assert "schema1.table2: 10 hours" in message
+    assert "schema1.table1: 5 hours" in message
 
 
 def test_generate_slack_message_empty_data():
