@@ -1,6 +1,6 @@
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, List, Optional
+from typing import Any
 
 from dotenv import load_dotenv
 from google.cloud import bigquery
@@ -30,7 +30,7 @@ def process_dataset(
     audit_dataset_name: str,
     latency_params_table: str,
     dataset: str,
-) -> List[dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Process a single dataset for latency checks.
 
@@ -56,8 +56,8 @@ def get_latency_data(
     project_name: str,
     audit_dataset_name: str,
     latency_params_table: str,
-    target_dataset: Optional[str] = None,
-) -> List[dict[str, Any]]:
+    target_dataset: str | None = None,
+) -> list[dict[str, Any]]:
     """
     Get the latency data for all datasets or a specific dataset.
 
