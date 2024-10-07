@@ -8,8 +8,8 @@ on:
       - ".github/workflows/deploy-cloud-function.yml"
       - "main.py"
       - "requirements.txt"
-      - "tests/"
-      - "utils/"
+      - "tests/**"
+      - "utils/**"
   workflow_dispatch:
     inputs:
       PROJECT_NAME:
