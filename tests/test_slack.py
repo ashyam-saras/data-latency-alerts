@@ -1,5 +1,5 @@
 import os
-from unittest.mock import Mock, patch, mock_open  # Add mock_open here
+from unittest.mock import Mock, patch, mock_open
 
 import pandas as pd
 import pytest
@@ -23,12 +23,20 @@ def test_generate_slack_message(sample_latency_data):
     Ensures correct formatting and content of the message.
     """
     message = generate_slack_message(sample_latency_data)
-    assert "Tables missing SLA: 2" in message
-    assert "Most outdated table: 10 hours" in message
-    assert "Average delay: 8 hours" in message
-    assert "Top 5 oldest tables:" in message
-    assert "dataset1.table2: 10 hours" in message
-    assert "dataset1.table1: 5 hours" in message
+    assert isinstance(message, dict)
+    assert "blocks" in message
+    blocks = message["blocks"]
+    
+    # Check for the presence of key information in the message
+    message_text = "\n".join(block["text"]["text"] for block in blocks if "text" in block)
+    
+    assert "*Data Latency Alert" in message_text
+    assert "*Tables breaching SLA:* 2 tables" in message_text
+    assert "*Max delay:* 10 hours" in message_text
+    assert "*Average delay:* 7 hours" in message_text
+    assert "Top 5 datasets with highest average delay:" in message_text
+    assert "`dataset1` - avg delay: 7 hours (2 tables)" in message_text
+    assert "Detailed Report" in message_text
 
 
 def test_generate_slack_message_empty_data():
@@ -37,7 +45,11 @@ def test_generate_slack_message_empty_data():
     Ensures appropriate message for up-to-date scenarios.
     """
     message = generate_slack_message([])
-    assert "All tables are up to date." in message
+    assert isinstance(message, dict)
+    assert "blocks" in message
+    blocks = message["blocks"]
+    message_text = "\n".join(block["text"]["text"] for block in blocks if "text" in block)
+    assert "All tables are up to date." in message_text
 
 
 def test_generate_slack_message_specific_dataset(sample_latency_data):
@@ -46,7 +58,11 @@ def test_generate_slack_message_specific_dataset(sample_latency_data):
     Verifies that the dataset name is included in the message.
     """
     message = generate_slack_message(sample_latency_data, specific_dataset="test_dataset")
-    assert "for dataset test_dataset" in message
+    assert isinstance(message, dict)
+    assert "blocks" in message
+    blocks = message["blocks"]
+    message_text = "\n".join(block["text"]["text"] for block in blocks if "text" in block)
+    assert "Data Latency Alert for dataset test_dataset" in message_text
 
 
 @patch("utils.slack.WebClient")
@@ -59,9 +75,13 @@ def test_send_slack_message_success(mock_web_client):
     mock_web_client.return_value = mock_client
     mock_client.chat_postMessage.return_value = {"ts": "1234567890.123456"}
 
-    send_slack_message("Test message", "test_channel", "fake_token")
+    message = {"blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": "Test message"}}]}
+    send_slack_message(message, "test_channel", "fake_token")
 
-    mock_client.chat_postMessage.assert_called_once_with(channel="test_channel", text="Test message")
+    mock_client.chat_postMessage.assert_called_once()
+    call_args = mock_client.chat_postMessage.call_args[1]
+    assert call_args["channel"] == "test_channel"
+    assert call_args["blocks"] == message["blocks"]
 
 
 @patch("utils.slack.WebClient")
@@ -74,8 +94,9 @@ def test_send_slack_message_with_file(mock_web_client):
     mock_web_client.return_value = mock_client
     mock_client.chat_postMessage.return_value = {"ts": "1234567890.123456"}
 
+    message = {"blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": "Test message"}}]}
     with patch("builtins.open", mock_open(read_data="file content")):
-        send_slack_message("Test message", "test_channel", "fake_token", ["test.xlsx"])
+        send_slack_message(message, "test_channel", "fake_token", ["test.xlsx"])
 
     mock_client.chat_postMessage.assert_called_once()
     mock_client.files_upload_v2.assert_called_once()
@@ -91,8 +112,9 @@ def test_send_slack_message_error(mock_web_client):
     mock_web_client.return_value = mock_client
     mock_client.chat_postMessage.side_effect = SlackApiError("Error", {"error": "Test error"})
 
+    message = {"blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": "Test message"}}]}
     with pytest.raises(SlackApiError):
-        send_slack_message("Test message", "test_channel", "fake_token")
+        send_slack_message(message, "test_channel", "fake_token")
 
 
 def test_write_to_excel(tmp_path):
