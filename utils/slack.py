@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timedelta, timezone
+from collections import defaultdict
 from typing import Any, Optional
 
 import pandas as pd
@@ -9,7 +9,18 @@ from slack_sdk.errors import SlackApiError
 from utils.logging import cprint
 
 
-def generate_slack_message(latency_data: list[dict[str, Any]], specific_dataset: Optional[str] = None) -> str:
+def calculate_time_period(hours):
+    days = hours // 24
+    months = days // 30
+    if months > 0:
+        return f"{hours:,} hours (≈ {months} month{'s' if months > 1 else ''})"
+    elif days > 0:
+        return f"{hours:,} hours (≈ {days} day{'s' if days > 1 else ''})"
+    else:
+        return f"{hours:,} hours"
+
+
+def generate_slack_message(latency_data: list[dict[str, Any]], specific_dataset: Optional[str] = None) -> dict:
     """
     Generate a Slack message summarizing the data latency.
 
@@ -18,53 +29,98 @@ def generate_slack_message(latency_data: list[dict[str, Any]], specific_dataset:
         specific_dataset: Optional; the specific dataset that was checked, if any.
 
     Returns:
-        str: Slack message summarizing the data latency.
+        dict: Slack message blocks summarizing the data latency.
     """
     cprint("Generating Slack message")
 
     if not latency_data:
         cprint("No latency data found")
-        return f"All tables {'in the specified dataset ' if specific_dataset else ''}are up to date."
+        return {
+            "blocks": [
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f"All tables {'in the specified dataset ' if specific_dataset else ''}are up to date.",
+                    },
+                }
+            ]
+        }
+
+    # Remove duplicates
+    unique_data = {(row["dataset_id"], row["table_id"]): row for row in latency_data}.values()
+    latency_data = list(unique_data)
 
     total_tables = len(latency_data)
     max_hours = max(row["hours_since_update"] for row in latency_data)
     avg_hours = sum(row["hours_since_update"] for row in latency_data) / total_tables
 
-    # Sort tables by hours_since_update in descending order
-    sorted_data = sorted(latency_data, key=lambda x: x["hours_since_update"], reverse=True)
+    # Group by dataset and calculate average delay
+    dataset_stats = defaultdict(lambda: {"count": 0, "total_hours": 0})
+    for row in latency_data:
+        dataset = row["dataset_id"]
+        dataset_stats[dataset]["count"] += 1
+        dataset_stats[dataset]["total_hours"] += row["hours_since_update"]
 
-    # Get the top 5 oldest tables
-    oldest_tables = sorted_data[:5]
+    # Calculate average delay for each dataset
+    for stats in dataset_stats.values():
+        stats["avg_hours"] = stats["total_hours"] / stats["count"]
 
-    # Get current timestamp in IST
-    now = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=5, minutes=30)))
-    timestamp = now.strftime(r"%Y-%m-%d %H:%M:%S IST")
+    # Sort datasets by average delay and get top 5
+    top_datasets = sorted(dataset_stats.items(), key=lambda x: x[1]["avg_hours"], reverse=True)[:5]
 
     dataset_info = f"for dataset {specific_dataset} " if specific_dataset else ""
-    message = (
-        f"Data Latency Alert Summary {dataset_info}(as of {timestamp}):\n"
-        f"• Tables missing SLA: {total_tables}\n"
-        f"• Most outdated table: {max_hours:.0f} hours\n"
-        f"• Average delay: {avg_hours:.0f} hours\n\n"
-        "Top 5 oldest tables:\n"
-    )
 
-    for table in oldest_tables:
-        message += f"• {table['dataset_id']}.{table['table_id']}: {table['hours_since_update']:.0f} hours\n"
+    message_blocks = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"🚨 *Data Latency Alert {dataset_info.strip()}*"}},
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*Total tables breaching SLA:*\n{total_tables:,} tables"},
+                {"type": "mrkdwn", "text": f"*Max delay:*\n{calculate_time_period(max_hours)}"},
+                {"type": "mrkdwn", "text": f"*Average delay:*\n{calculate_time_period(int(avg_hours))}"},
+            ],
+        },
+        {"type": "divider"},
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "*Top 5 datasets with highest average delay:*\n"
+                + "\n".join(
+                    [
+                        f"{i+1}. `{dataset}` - {info['count']} tables (avg delay: {calculate_time_period(int(info['avg_hours']))})"
+                        for i, (dataset, info) in enumerate(top_datasets)
+                    ]
+                ),
+            },
+        },
+    ]
 
-    message += "\nDetailed report will be attached in the thread."
-
-    cprint(f"Slack message: {message}")
-    return message
+    cprint("Slack message blocks generated")
+    return {"blocks": message_blocks}
 
 
-def send_slack_message(message: str, channel_id: str, token: str, file_paths: list[str] = None) -> None:
+def send_slack_message(message: dict, channel_id: str, token: str, file_paths: list[str] = None) -> None:
     try:
         client = WebClient(token=token)
 
         # Send the main message
         cprint("Sending main Slack message")
-        response = client.chat_postMessage(channel=channel_id, text=message)
+        
+        # Extract blocks from the message dict
+        blocks = message.get("blocks", [])
+        
+        # Create a fallback text from the first block if available
+        fallback_text = "Data Latency Alert"
+        if blocks and "text" in blocks[0].get("text", {}):
+            fallback_text = blocks[0]["text"]["text"]
+        
+        response = client.chat_postMessage(
+            channel=channel_id,
+            text=fallback_text,
+            blocks=blocks
+        )
 
         # Get the timestamp of the main message to use as the thread_ts
         thread_ts = response["ts"]
@@ -75,7 +131,7 @@ def send_slack_message(message: str, channel_id: str, token: str, file_paths: li
                 cprint(f"Uploading file: {file_path}")
                 with open(file_path, "rb") as file_content:
                     upload_response = client.files_upload_v2(
-                        channels=channel_id,
+                        channel=channel_id,
                         file=file_content,
                         filename=os.path.basename(file_path),
                         initial_comment="Here's the detailed report of outdated tables:",
