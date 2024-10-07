@@ -49,8 +49,8 @@ def test_process_dataset(mock_bigquery_client):
     Crucial for ensuring accurate latency data for individual datasets.
     """
     mock_bigquery_client.query.return_value.result.return_value = [
-        {"table": "table1", "latency": 1},
-        {"table": "table2", "latency": 2},
+        {"table": "table1", "latency": 1, "threshold_hours": 24},
+        {"table": "table2", "latency": 2, "threshold_hours": 24},
     ]
     result = process_dataset(mock_bigquery_client, "project", "audit_dataset", "latency_params", "dataset1")
     assert len(result) == 2
