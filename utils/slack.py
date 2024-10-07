@@ -32,7 +32,7 @@ def generate_slack_message(latency_data: list[dict[str, Any]], specific_dataset:
 
     # Sort tables by hours_since_update in descending order
     sorted_data = sorted(latency_data, key=lambda x: x["hours_since_update"], reverse=True)
-    
+
     # Get the top 5 oldest tables
     oldest_tables = sorted_data[:5]
 
@@ -50,7 +50,7 @@ def generate_slack_message(latency_data: list[dict[str, Any]], specific_dataset:
     )
 
     for table in oldest_tables:
-        message += f"• {table['schema']}.{table['table']}: {table['hours_since_update']:.0f} hours\n"
+        message += f"• {table['dataset_id']}.{table['table_id']}: {table['hours_since_update']:.0f} hours\n"
 
     message += "\nDetailed report will be attached in the thread."
 
@@ -84,7 +84,7 @@ def send_slack_message(message: str, channel_id: str, token: str, file_paths: li
 
         cprint("Message and files sent successfully")
     except SlackApiError as e:
-        error_message = e.response['error'] if isinstance(e.response, dict) else str(e.response)
+        error_message = e.response["error"] if isinstance(e.response, dict) else str(e.response)
         cprint(f"Error sending Slack message: {error_message}", severity="ERROR")
         raise
 
