@@ -7,6 +7,7 @@ This project provides an automated system to monitor and alert about BigQuery ta
 
 ## Table of Contents
 - [Features](#features)
+- [Prerequisites](#prerequisites)
 - [How it works](#how-it-works)
 - [Setup and Configuration](#setup-and-configuration)
   - [Environment Variables](#environment-variables)
@@ -26,6 +27,21 @@ This project provides an automated system to monitor and alert about BigQuery ta
 - Slack notifications with summary statistics and detailed Excel reports
 - Cloud Function deployment with scheduled execution via Cloud Scheduler
 - Automated CI/CD pipeline using GitHub Actions
+
+## Prerequisites
+
+Before setting up this project, ensure you have the following:
+
+1. A Google Cloud Platform (GCP) project with billing enabled
+2. A service account with the following roles:
+   - Cloud Functions Developer
+   - Cloud Run Admin
+   - Cloud Scheduler Admin
+   - Service Account User
+   - BigQuery Job User
+3. Google Cloud SDK installed and configured
+4. Python 3.11 or later
+5. A Slack workspace with permissions to create apps and send messages
 
 ## How it works
 
