@@ -107,20 +107,16 @@ def send_slack_message(message: dict, channel_id: str, token: str, file_paths: l
 
         # Send the main message
         cprint("Sending main Slack message")
-        
+
         # Extract blocks from the message dict
         blocks = message.get("blocks", [])
-        
+
         # Create a fallback text from the first block if available
         fallback_text = "Data Latency Alert"
         if blocks and "text" in blocks[0].get("text", {}):
             fallback_text = blocks[0]["text"]["text"]
-        
-        response = client.chat_postMessage(
-            channel=channel_id,
-            text=fallback_text,
-            blocks=blocks
-        )
+
+        response = client.chat_postMessage(channel=channel_id, text=fallback_text, blocks=blocks)
 
         # Get the timestamp of the main message to use as the thread_ts
         thread_ts = response["ts"]
@@ -130,7 +126,7 @@ def send_slack_message(message: dict, channel_id: str, token: str, file_paths: l
             for file_path in file_paths:
                 cprint(f"Uploading file: {file_path}")
                 with open(file_path, "rb") as file_content:
-                    upload_response = client.files_upload_v2(
+                    client.files_upload_v2(
                         channel=channel_id,
                         file=file_content,
                         filename=os.path.basename(file_path),
