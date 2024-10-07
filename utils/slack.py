@@ -1,6 +1,8 @@
+import json
 import os
 from collections import defaultdict
 from typing import Any, Optional
+import math
 
 import pandas as pd
 from slack_sdk import WebClient
@@ -10,12 +12,14 @@ from utils.logging import cprint
 
 
 def calculate_time_period(hours):
-    days = hours // 24
-    months = days // 30
-    if months > 0:
-        return f"{hours:,} hours (≈ {months} month{'s' if months > 1 else ''})"
-    elif days > 0:
-        return f"{hours:,} hours (≈ {days} day{'s' if days > 1 else ''})"
+    days = hours / 24
+    months = days / 30
+    if months >= 1:
+        rounded_months = math.ceil(months)
+        return f"{hours:,} hours (≈ {rounded_months} month{'s' if rounded_months > 1 else ''})"
+    elif days >= 1:
+        rounded_days = math.ceil(days)
+        return f"{hours:,} hours (≈ {rounded_days} day{'s' if rounded_days > 1 else ''})"
     else:
         return f"{hours:,} hours"
 
@@ -75,11 +79,14 @@ def generate_slack_message(latency_data: list[dict[str, Any]], specific_dataset:
         {"type": "section", "text": {"type": "mrkdwn", "text": f"🚨 *Data Latency Alert {dataset_info.strip()}*"}},
         {
             "type": "section",
-            "fields": [
-                {"type": "mrkdwn", "text": f"*Total tables breaching SLA:*\n{total_tables:,} tables"},
-                {"type": "mrkdwn", "text": f"*Max delay:*\n{calculate_time_period(max_hours)}"},
-                {"type": "mrkdwn", "text": f"*Average delay:*\n{calculate_time_period(int(avg_hours))}"},
-            ],
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"*Tables breaching SLA:* {total_tables:,} tables\n"
+                    f"*Max delay:* {calculate_time_period(max_hours)}\n"
+                    f"*Average delay:* {calculate_time_period(int(avg_hours))}"
+                ),
+            },
         },
         {"type": "divider"},
         {
@@ -89,15 +96,24 @@ def generate_slack_message(latency_data: list[dict[str, Any]], specific_dataset:
                 "text": "*Top 5 datasets with highest average delay:*\n"
                 + "\n".join(
                     [
-                        f"{i+1}. `{dataset}` - {info['count']} tables (avg delay: {calculate_time_period(int(info['avg_hours']))})"
+                        f"{i+1}. `{dataset}` - avg delay: {calculate_time_period(int(info['avg_hours']))} ({info['count']} tables)"
                         for i, (dataset, info) in enumerate(top_datasets)
                     ]
                 ),
             },
         },
+        {"type": "divider"},
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "📊 *Detailed Report*\nPlease check the thread below for a detailed Excel report of all outdated tables.",
+            },
+        },
     ]
 
     cprint("Slack message blocks generated")
+    cprint(f"Message blocks: {json.dumps(message_blocks)}", severity="DEBUG")
     return {"blocks": message_blocks}
 
 
