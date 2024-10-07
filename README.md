@@ -39,9 +39,8 @@ Before setting up this project, ensure you have the following:
    - Cloud Scheduler Admin
    - Service Account User
    - BigQuery Job User
-3. Google Cloud SDK installed and configured
-4. Python 3.11 or later
-5. A Slack workspace with permissions to create apps and send messages
+3. Python 3.11 or later
+4. A Slack workspace with permissions to create apps and send messages
 
 ## How it works
 
