@@ -1,17 +1,17 @@
 import os
-import pandas as pd
 
 import functions_framework
+import pandas as pd
 from dotenv import load_dotenv
 from flask import Request, jsonify
 from google.cloud import bigquery
 
 import utils.slack as slack
-from utils.logging import cprint
 from utils.bigquery import get_latency_data
+from utils.logging import cprint
 
 # Load environment variables
-load_dotenv()
+load_dotenv(override=True)
 
 # Environment variables
 PROJECT_NAME = os.environ["PROJECT_NAME"]
@@ -22,6 +22,7 @@ TOKEN = os.environ["SLACK_API_TOKEN"]
 
 # Initialize BigQuery client
 bigquery_client = bigquery.Client()
+
 
 @functions_framework.http
 def latency_alert(request: Request):
@@ -39,7 +40,7 @@ def latency_alert(request: Request):
         if not token:
             raise ValueError("Missing required parameter: slack_token")
 
-        latency_data = get_latency_data(
+        latency_data, errors = get_latency_data(
             bigquery_client,
             PROJECT_NAME,
             AUDIT_DATASET_NAME,
@@ -47,16 +48,20 @@ def latency_alert(request: Request):
             target_dataset,
         )
 
+        error_message = None
+        if errors:
+            error_message = "Errors occurred during processing:\n" + "\n".join(errors)
+
         if latency_data:
             df = pd.DataFrame(latency_data)
             excel_filename = slack.write_to_excel(df, "/tmp/latency_data.xlsx")
-            message = slack.generate_slack_message(latency_data, target_dataset)
+            message = slack.generate_slack_message(latency_data, target_dataset, error_message=error_message)
             slack.send_slack_message(message, channel_id, token, [excel_filename])
             cprint("Data latency alert processed and sent successfully")
         else:
-            message = slack.generate_slack_message([], target_dataset)
+            message = slack.generate_slack_message([], target_dataset, error_message=error_message)
             slack.send_slack_message(message, channel_id, token)
-            cprint("No latency issues found, sent all-clear message")
+            cprint("No latency issues found or errors occurred, sent appropriate message")
 
         return jsonify({"status": "success", "message": "Data latency alert processed successfully"}), 200
     except ValueError as ve:

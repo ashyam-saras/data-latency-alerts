@@ -3,6 +3,7 @@ import math
 import os
 from collections import defaultdict
 from typing import Any, Optional
+from datetime import datetime, timezone
 
 import pandas as pd
 from slack_sdk import WebClient
@@ -12,44 +13,63 @@ from utils.logging import cprint
 
 
 def calculate_time_period(hours):
+    if isinstance(hours, datetime):
+        hours = (datetime.now(timezone.utc) - hours.astimezone(timezone.utc)).total_seconds() / 3600
+    elif isinstance(hours, pd.Timestamp):
+        hours = (pd.Timestamp.now(tz='UTC') - hours.tz_convert('UTC')).total_seconds() / 3600
+    
     days = hours / 24
     months = days / 30
     if months >= 1:
         rounded_months = math.ceil(months)
-        return f"{hours:,} hours (≈ {rounded_months} month{'s' if rounded_months > 1 else ''})"
+        return f"{hours:,.2f} hours (≈ {rounded_months} month{'s' if rounded_months > 1 else ''})"
     elif days >= 1:
         rounded_days = math.ceil(days)
-        return f"{hours:,} hours (≈ {rounded_days} day{'s' if rounded_days > 1 else ''})"
+        return f"{hours:,.2f} hours (≈ {rounded_days} day{'s' if rounded_days > 1 else ''})"
     else:
-        return f"{hours:,} hours"
+        return f"{hours:,.2f} hours"
 
 
-def generate_slack_message(latency_data: list[dict[str, Any]], specific_dataset: Optional[str] = None) -> dict:
+def generate_slack_message(
+    latency_data: list[dict[str, Any]],
+    specific_dataset: Optional[str] = None,
+    error_message: Optional[str] = None,
+) -> dict:
     """
     Generate a Slack message summarizing the data latency.
 
     Args:
         latency_data: List of dictionaries containing latency data.
         specific_dataset: Optional; the specific dataset that was checked, if any.
+        error_message: Optional; error message to include in the Slack message.
 
     Returns:
         dict: Slack message blocks summarizing the data latency.
     """
     cprint("Generating Slack message")
 
+    message_blocks = []
+
+    if error_message:
+        message_blocks.append(
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"⚠️ *Error encountered during processing:*\n{error_message}"},
+            }
+        )
+        message_blocks.append({"type": "divider"})
+
     if not latency_data:
-        cprint("No latency data found")
-        return {
-            "blocks": [
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f"All tables {'in the specified dataset ' if specific_dataset else ''}are up to date.",
-                    },
-                }
-            ]
-        }
+        message_blocks.append(
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"All tables {'in the specified dataset ' if specific_dataset else ''}are up to date.",
+                },
+            }
+        )
+        return {"blocks": message_blocks}
 
     # Remove duplicates and handle group_by cases
     unique_data = {}
@@ -79,42 +99,44 @@ def generate_slack_message(latency_data: list[dict[str, Any]], specific_dataset:
 
     dataset_info = f"for dataset {specific_dataset} " if specific_dataset else ""
 
-    message_blocks = [
-        {"type": "section", "text": {"type": "mrkdwn", "text": f"🚨 *Data Latency Alert {dataset_info.strip()}*"}},
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": (
-                    f"*Tables breaching SLA:* {total_tables:,} tables\n"
-                    f"*Max delay:* {calculate_time_period(max_hours)}\n"
-                    f"*Average delay:* {calculate_time_period(int(avg_hours))}"
-                ),
+    message_blocks.extend(
+        [
+            {"type": "section", "text": {"type": "mrkdwn", "text": f"🚨 *Data Latency Alert {dataset_info.strip()}*"}},
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"*Tables breaching SLA:* {total_tables:,} tables\n"
+                        f"*Max delay:* {calculate_time_period(max_hours)}\n"
+                        f"*Average delay:* {calculate_time_period(int(avg_hours))}"
+                    ),
+                },
             },
-        },
-        {"type": "divider"},
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": "*Top 5 datasets with highest average delay:*\n"
-                + "\n".join(
-                    [
-                        f"{i+1}. `{dataset}` - avg delay: {calculate_time_period(int(info['avg_hours']))} ({info['count']} tables)"
-                        for i, (dataset, info) in enumerate(top_datasets)
-                    ]
-                ),
+            {"type": "divider"},
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "*Top 5 datasets with highest average delay:*\n"
+                    + "\n".join(
+                        [
+                            f"{i+1}. `{dataset}` - avg delay: {calculate_time_period(int(info['avg_hours']))} ({info['count']} tables)"
+                            for i, (dataset, info) in enumerate(top_datasets)
+                        ]
+                    ),
+                },
             },
-        },
-        {"type": "divider"},
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": "📊 *Detailed Report*\nPlease check the thread below for a detailed Excel report of all outdated tables.",
+            {"type": "divider"},
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "📊 *Detailed Report*\nPlease check the thread below for a detailed Excel report of all outdated tables.",
+                },
             },
-        },
-    ]
+        ]
+    )
 
     cprint("Slack message blocks generated")
     cprint(f"Message blocks: {json.dumps(message_blocks)}", severity="DEBUG")
@@ -173,6 +195,10 @@ def write_to_excel(df: pd.DataFrame, excel_filename: str) -> str:
         str: Name of the Excel file.
     """
     try:
+        # Convert timezone-aware datetimes to timezone-naive
+        for column in df.select_dtypes(include=['datetime64[ns, UTC]']).columns:
+            df[column] = df[column].dt.tz_localize(None)
+
         with pd.ExcelWriter(excel_filename, engine="openpyxl") as writer:
             df.to_excel(writer, sheet_name="Results", index=False)
 

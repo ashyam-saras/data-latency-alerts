@@ -1,6 +1,6 @@
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any
+from typing import Any, Dict, List, Tuple
 
 from dotenv import load_dotenv
 from google.cloud import bigquery
@@ -11,12 +11,15 @@ from utils.logging import cprint
 load_dotenv()
 
 
-def get_latency_check_query():
-    with open("latency_check_query.sql", "r") as file:
+def get_query_content(filename):
+    with open(filename, "r") as file:
         return file.read()
 
 
-LATENCY_CHECK_QUERY = get_latency_check_query()
+LATENCY_CHECK_DATASET_LEVEL = get_query_content("latency_check_dataset_level.sql")
+LATENCY_CHECK_TABLE_LEVEL = get_query_content("latency_check_table_level.sql")
+LATENCY_CHECK_GROUP_BY = get_query_content("latency_check_group_by.sql")
+
 MAX_WORKERS = int(os.getenv("BQ_PARALLEL_DATASETS", "10"))
 
 PROJECT_NAME = os.environ["PROJECT_NAME"]
@@ -30,52 +33,51 @@ def process_dataset(
     audit_dataset_name: str,
     latency_params_table: str,
     dataset: str,
-) -> list[dict[str, Any]]:
+) -> List[Dict[str, Any]]:
+    # Get the configuration for this dataset
+    config_query = f"""
+    SELECT 
+      dataset,
+      tables,
+      threshold_hours,
+      group_by_column,
+      last_updated_column,
+      inclusion_rule
+    FROM `{project_name}.{audit_dataset_name}.{latency_params_table}`
+    WHERE dataset = '{dataset}'
     """
-    Process a single dataset for latency checks.
-
-    Args:
-        client: BigQuery client.
-        project_name: Name of the BigQuery project.
-        audit_dataset_name: Name of the audit dataset.
-        latency_params_table: Name of the latency parameters table.
-        dataset: Name of the dataset to process.
-    """
-    # First, get the list of tables in the dataset
-    tables_query = f"""
-    SELECT table_id
-    FROM `{project_name}.{dataset}.__TABLES__`
-    WHERE type = 'TABLE'
-    """
-    tables = [row["table_id"] for row in client.query(tables_query).result()]
+    config_job = client.query(config_query)
+    config = list(config_job.result())[0]
 
     all_results = []
-    for table in tables:
-        dataset_query = LATENCY_CHECK_QUERY.format(
+
+    if config["group_by_column"] and config["last_updated_column"]:
+        # Use group by query
+        for table in config["tables"]:
+            query = LATENCY_CHECK_GROUP_BY.format(
+                project_name=project_name,
+                audit_dataset_name=audit_dataset_name,
+                latency_params_table=latency_params_table,
+                dataset_id=dataset,
+                table_id=table,
+                group_by_column=config["group_by_column"],
+                last_updated_column=config["last_updated_column"],
+            )
+            query_job = client.query(query)
+            results = [dict(row) for row in query_job.result()]
+            all_results.extend(results)
+    else:
+        # Use table level or dataset level query
+        query = LATENCY_CHECK_TABLE_LEVEL if config["tables"] else LATENCY_CHECK_DATASET_LEVEL
+        query = query.format(
             project_name=project_name,
             audit_dataset_name=audit_dataset_name,
             latency_params_table=latency_params_table,
             dataset_id=dataset,
-            table_id=table,
         )
-        query_job = client.query(dataset_query)
+        query_job = client.query(query)
         results = [dict(row) for row in query_job.result()]
-
-        for row in results:
-            update_info = row["update_info"]
-            processed_row = {
-                "project_id": row["project_id"],
-                "dataset_id": row["dataset_id"],
-                "table_id": row["table_id"],
-                "threshold_hours": row["threshold_hours"],
-                "inclusion_rule": row["inclusion_rule"],
-                "group_by_column": row["group_by_column"],
-                "last_updated_column": row["last_updated_column"],
-                "last_modified_time": update_info["last_modified_time"],
-                "hours_since_update": update_info["hours_since_update"],
-                "group_by_value": update_info["group_by_value"],
-            }
-            all_results.append(processed_row)
+        all_results.extend(results)
 
     return all_results
 
@@ -86,7 +88,7 @@ def get_latency_data(
     audit_dataset_name: str,
     latency_params_table: str,
     target_dataset: str | None = None,
-) -> list[dict[str, Any]]:
+) -> Tuple[List[Dict[str, Any]], List[str]]:
     """
     Get the latency data for all datasets or a specific dataset.
 
@@ -98,6 +100,10 @@ def get_latency_data(
         target_dataset: Optional; if provided, only check this dataset.
     """
     cprint("Getting latency data")
+    cprint(f"Project name: {project_name}", severity="DEBUG")
+    cprint(f"Audit dataset name: {audit_dataset_name}", severity="DEBUG")
+    cprint(f"Latency params table: {latency_params_table}", severity="DEBUG")
+    cprint(f"Target dataset: {target_dataset}", severity="DEBUG")
 
     # Get the list of datasets from dataset_params
     dataset_query = f"""
@@ -118,6 +124,7 @@ def get_latency_data(
 
     # Run the main query for each dataset in parallel and combine the results
     all_results = []
+    errors = []
     cprint(f"Using {MAX_WORKERS} parallel workers")
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         future_to_dataset = {
@@ -138,7 +145,9 @@ def get_latency_data(
                 all_results.extend(results)
                 cprint(f"Processed dataset: {dataset} with {len(results)} tables", severity="DEBUG")
             except Exception as exc:
-                cprint(f"Dataset {dataset} generated an exception: {exc}", severity="ERROR")
+                error_msg = f"Dataset {dataset} generated an exception: {exc}"
+                cprint(error_msg, severity="ERROR")
+                errors.append(error_msg)
 
     cprint(f"Processed {len(all_results)} tables in total")
-    return all_results
+    return all_results, errors  # Return both results and errors
