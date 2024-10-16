@@ -41,14 +41,43 @@ def process_dataset(
         latency_params_table: Name of the latency parameters table.
         dataset: Name of the dataset to process.
     """
-    dataset_query = LATENCY_CHECK_QUERY.format(
-        project_name=project_name,
-        audit_dataset_name=audit_dataset_name,
-        latency_params_table=latency_params_table,
-        dataset_id=dataset,
-    )
-    query_job = client.query(dataset_query)
-    return [dict(row) for row in query_job.result()]
+    # First, get the list of tables in the dataset
+    tables_query = f"""
+    SELECT table_id
+    FROM `{project_name}.{dataset}.__TABLES__`
+    WHERE type = 'TABLE'
+    """
+    tables = [row["table_id"] for row in client.query(tables_query).result()]
+
+    all_results = []
+    for table in tables:
+        dataset_query = LATENCY_CHECK_QUERY.format(
+            project_name=project_name,
+            audit_dataset_name=audit_dataset_name,
+            latency_params_table=latency_params_table,
+            dataset_id=dataset,
+            table_id=table,
+        )
+        query_job = client.query(dataset_query)
+        results = [dict(row) for row in query_job.result()]
+
+        for row in results:
+            update_info = row["update_info"]
+            processed_row = {
+                "project_id": row["project_id"],
+                "dataset_id": row["dataset_id"],
+                "table_id": row["table_id"],
+                "threshold_hours": row["threshold_hours"],
+                "inclusion_rule": row["inclusion_rule"],
+                "group_by_column": row["group_by_column"],
+                "last_updated_column": row["last_updated_column"],
+                "last_modified_time": update_info["last_modified_time"],
+                "hours_since_update": update_info["hours_since_update"],
+                "group_by_value": update_info["group_by_value"],
+            }
+            all_results.append(processed_row)
+
+    return all_results
 
 
 def get_latency_data(
@@ -72,14 +101,12 @@ def get_latency_data(
 
     # Get the list of datasets from dataset_params
     dataset_query = f"""
-    SELECT dp.dataset, dp.exclude_list, dp.threshold_hours
-    FROM `{project_name}.{audit_dataset_name}.{latency_params_table}` dp
-    JOIN `{project_name}.INFORMATION_SCHEMA.SCHEMATA` s
-        ON dp.dataset = s.schema_name
+    SELECT DISTINCT dataset
+    FROM `{project_name}.{audit_dataset_name}.{latency_params_table}`
     """
 
     if target_dataset:
-        dataset_query += f" WHERE dp.dataset = '{target_dataset}'"
+        dataset_query += f" WHERE dataset = '{target_dataset}'"
 
     dataset_job = client.query(dataset_query)
     datasets = [row["dataset"] for row in dataset_job.result()]

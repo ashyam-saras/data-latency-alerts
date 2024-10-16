@@ -1,4 +1,5 @@
 import os
+import pandas as pd
 
 import functions_framework
 from dotenv import load_dotenv
@@ -7,7 +8,7 @@ from google.cloud import bigquery
 
 import utils.slack as slack
 from utils.logging import cprint
-from utils.utils import process_data_latency
+from utils.bigquery import get_latency_data
 
 # Load environment variables
 load_dotenv()
@@ -21,7 +22,6 @@ TOKEN = os.environ["SLACK_API_TOKEN"]
 
 # Initialize BigQuery client
 bigquery_client = bigquery.Client()
-
 
 @functions_framework.http
 def latency_alert(request: Request):
@@ -39,18 +39,25 @@ def latency_alert(request: Request):
         if not token:
             raise ValueError("Missing required parameter: slack_token")
 
-        latency_data, df = process_data_latency(
+        latency_data = get_latency_data(
             bigquery_client,
             PROJECT_NAME,
             AUDIT_DATASET_NAME,
             LATENCY_PARAMS_TABLE,
             target_dataset,
         )
-        excel_filename = slack.write_to_excel(df, "/tmp/latency_data.xlsx")
-        message = slack.generate_slack_message(latency_data, target_dataset)
-        slack.send_slack_message(message, channel_id, token, [excel_filename])
 
-        cprint("Data latency alert processed successfully")
+        if latency_data:
+            df = pd.DataFrame(latency_data)
+            excel_filename = slack.write_to_excel(df, "/tmp/latency_data.xlsx")
+            message = slack.generate_slack_message(latency_data, target_dataset)
+            slack.send_slack_message(message, channel_id, token, [excel_filename])
+            cprint("Data latency alert processed and sent successfully")
+        else:
+            message = slack.generate_slack_message([], target_dataset)
+            slack.send_slack_message(message, channel_id, token)
+            cprint("No latency issues found, sent all-clear message")
+
         return jsonify({"status": "success", "message": "Data latency alert processed successfully"}), 200
     except ValueError as ve:
         cprint(f"Validation error: {str(ve)}", severity="ERROR")

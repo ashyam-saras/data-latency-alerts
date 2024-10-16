@@ -1,8 +1,8 @@
 import json
+import math
 import os
 from collections import defaultdict
 from typing import Any, Optional
-import math
 
 import pandas as pd
 from slack_sdk import WebClient
@@ -51,9 +51,13 @@ def generate_slack_message(latency_data: list[dict[str, Any]], specific_dataset:
             ]
         }
 
-    # Remove duplicates
-    unique_data = {(row["dataset_id"], row["table_id"]): row for row in latency_data}.values()
-    latency_data = list(unique_data)
+    # Remove duplicates and handle group_by cases
+    unique_data = {}
+    for row in latency_data:
+        key = (row["dataset_id"], row["table_id"], row.get("group_by_value", ""))
+        if key not in unique_data or row["hours_since_update"] > unique_data[key]["hours_since_update"]:
+            unique_data[key] = row
+    latency_data = list(unique_data.values())
 
     total_tables = len(latency_data)
     max_hours = max(row["hours_since_update"] for row in latency_data)
