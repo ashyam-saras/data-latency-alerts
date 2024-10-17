@@ -6,7 +6,7 @@ import pandas as pd
 from google.cloud import bigquery
 
 from utils import bigquery as bq
-from utils.logging import cprint
+from utils.log import cprint
 
 
 def get_request_params(cloud_event: Dict[str, Any]) -> Dict[str, Any]:

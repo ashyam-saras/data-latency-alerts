@@ -8,7 +8,7 @@ from google.cloud import bigquery
 
 import utils.slack as slack
 from utils.bigquery import get_latency_data
-from utils.logging import cprint
+from utils.log import cprint
 
 # Load environment variables
 load_dotenv(override=True)

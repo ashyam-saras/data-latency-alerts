@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Tuple
 from dotenv import load_dotenv
 from google.cloud import bigquery
 
-from utils.logging import cprint
+from utils.log import cprint
 
 # Load environment variables
 load_dotenv()

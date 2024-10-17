@@ -9,7 +9,7 @@ import pandas as pd
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
-from utils.logging import cprint
+from utils.log import cprint
 
 
 def calculate_time_period(hours):
