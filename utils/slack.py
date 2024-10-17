@@ -22,12 +22,12 @@ def calculate_time_period(hours):
     months = days / 30
     if months >= 1:
         rounded_months = math.ceil(months)
-        return f"{hours:,.2f} hours (≈ {rounded_months} month{'s' if rounded_months > 1 else ''})"
+        return f"{round(hours)} hours (≈ {rounded_months} month{'s' if rounded_months > 1 else ''})"
     elif days >= 1:
         rounded_days = math.ceil(days)
-        return f"{hours:,.2f} hours (≈ {rounded_days} day{'s' if rounded_days > 1 else ''})"
+        return f"{round(hours)} hours (≈ {rounded_days} day{'s' if rounded_days > 1 else ''})"
     else:
-        return f"{hours:,.2f} hours"
+        return f"{round(hours)} hours"
 
 
 def generate_slack_message(
@@ -108,8 +108,8 @@ def generate_slack_message(
                     "type": "mrkdwn",
                     "text": (
                         f"*Tables breaching SLA:* {total_tables:,} tables\n"
-                        f"*Max delay:* {calculate_time_period(max_hours)}\n"
-                        f"*Average delay:* {calculate_time_period(int(avg_hours))}"
+                        f"*Max delay:* {calculate_time_period(round(max_hours))}\n"
+                        f"*Average delay:* {calculate_time_period(round(avg_hours))}"
                     ),
                 },
             },
@@ -214,3 +214,4 @@ def write_to_excel(df: pd.DataFrame, excel_filename: str) -> str:
     except Exception as e:
         cprint(f"Error writing to Excel: {e}", severity="ERROR")
         raise
+
