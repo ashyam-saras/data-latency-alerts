@@ -21,10 +21,10 @@ def calculate_time_period(hours):
     days = hours / 24
     months = days / 30
     if months >= 1:
-        rounded_months = math.ceil(months)
+        rounded_months = math.floor(months)
         return f"{round(hours)} hours (≈ {rounded_months} month{'s' if rounded_months > 1 else ''})"
     elif days >= 1:
-        rounded_days = math.ceil(days)
+        rounded_days = math.floor(days)
         return f"{round(hours)} hours (≈ {rounded_days} day{'s' if rounded_days > 1 else ''})"
     else:
         return f"{round(hours)} hours"
@@ -195,9 +195,24 @@ def write_to_excel(df: pd.DataFrame, excel_filename: str) -> str:
         str: Name of the Excel file.
     """
     try:
-        # Convert timezone-aware datetimes to timezone-naive
-        for column in df.select_dtypes(include=['datetime64[ns, UTC]']).columns:
-            df[column] = df[column].dt.tz_localize(None)
+        print("Debug: Initial DataFrame info:")
+        print(df.info())
+        print("\nDebug: DataFrame head:")
+        print(df.head())
+
+        # Convert timezone-aware datetimes to timezone-naive UTC
+        for column in df.select_dtypes(include=['datetime64[ns, UTC]', 'datetime64[ns]', 'object']).columns:
+            print(f"\nDebug: Processing column {column}")
+            print(f"Column dtype before conversion: {df[column].dtype}")
+            print(f"Sample values before conversion: {df[column].head()}")
+            
+            if pd.api.types.is_datetime64_any_dtype(df[column]):
+                df[column] = df[column].dt.tz_convert('UTC').dt.tz_localize(None)
+            elif pd.api.types.is_object_dtype(df[column]):
+                df[column] = pd.to_datetime(df[column], utc=True).dt.tz_localize(None)
+            
+            print(f"Column dtype after conversion: {df[column].dtype}")
+            print(f"Sample values after conversion: {df[column].head()}")
 
         with pd.ExcelWriter(excel_filename, engine="openpyxl") as writer:
             df.to_excel(writer, sheet_name="Results", index=False)
@@ -209,9 +224,21 @@ def write_to_excel(df: pd.DataFrame, excel_filename: str) -> str:
             read_me_df = pd.DataFrame(list(read_me_data.items()), columns=["Sheet", "Info"])
             read_me_df.to_excel(writer, sheet_name="Read me", index=False)
 
+        print("\nDebug: Excel file written successfully")
         cprint("Data saved to Excel file with additional sheets")
         return excel_filename
     except Exception as e:
+        print(f"\nDebug: Error occurred - {str(e)}")
         cprint(f"Error writing to Excel: {e}", severity="ERROR")
         raise
 
+# Add a test call to write_to_excel
+if __name__ == "__main__":
+    # Create a sample DataFrame with timezone-aware datetime
+    sample_df = pd.DataFrame({
+        "date_col": [pd.Timestamp('2023-01-01', tz='US/Eastern'), pd.Timestamp('2023-01-02', tz='US/Pacific')]
+    })
+    
+    print("Debug: Running test write_to_excel")
+    write_to_excel(sample_df, "test_output.xlsx")
+    print("Debug: Test completed")
