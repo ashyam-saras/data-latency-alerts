@@ -32,8 +32,35 @@ def test_calculate_time_period():
     assert calculate_time_period(five_hours_ago) == "5 hours"
 
     # Test with pandas Timestamp input
-    five_hours_ago_ts = pd.Timestamp.now(tz='UTC') - pd.Timedelta(hours=5)
-    assert calculate_time_period(five_hours_ago_ts) == "5 hours"
+    now_pd = pd.Timestamp.now(tz='UTC')
+    five_hours_ago_pd = now_pd - pd.Timedelta(hours=5)
+    assert calculate_time_period(five_hours_ago_pd) == "5 hours"
+
+    # Test with a pandas Timestamp in a different timezone
+    five_hours_ago_est = pd.Timestamp.now(tz='US/Eastern') - pd.Timedelta(hours=5)
+    result = calculate_time_period(five_hours_ago_est)
+    assert result == "5 hours", f"Expected '5 hours', but got '{result}'"
+
+    # Test with a future pandas Timestamp
+    five_hours_future = now_pd + pd.Timedelta(hours=5)
+    result = calculate_time_period(five_hours_future)
+    assert result == "0 hours", f"Expected '0 hours', but got '{result}'"
+
+    # Test with exactly now
+    result = calculate_time_period(now_pd)
+    assert result == "0 hours", f"Expected '0 hours', but got '{result}'"
+
+    # Test with a large future time
+    one_year_future = now_pd + pd.Timedelta(days=365)
+    result = calculate_time_period(one_year_future)
+    assert result == "0 hours", f"Expected '0 hours', but got '{result}'"
+
+    # Test with a pandas Timestamp from a specific date
+    specific_date = pd.Timestamp('2023-01-01 12:00:00', tz='UTC')
+    hours_diff = (pd.Timestamp.now(tz='UTC') - specific_date).total_seconds() / 3600
+    expected_result = calculate_time_period(hours_diff)
+    result = calculate_time_period(specific_date)
+    assert result == expected_result, f"Expected '{expected_result}', but got '{result}'"
 
 
 def test_generate_slack_message(sample_latency_data):
