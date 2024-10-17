@@ -1,5 +1,6 @@
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
 
 from dotenv import load_dotenv
@@ -41,8 +42,7 @@ def process_dataset(
       tables,
       threshold_hours,
       group_by_column,
-      last_updated_column,
-      inclusion_rule
+      last_updated_column
     FROM `{project_name}.{audit_dataset_name}.{latency_params_table}`
     WHERE dataset = '{dataset}'
     """
@@ -74,10 +74,19 @@ def process_dataset(
             audit_dataset_name=audit_dataset_name,
             latency_params_table=latency_params_table,
             dataset_id=dataset,
+            tables=", ".join([f"'{table}'" for table in config["tables"]]) if config["tables"] else "NULL"
         )
         query_job = client.query(query)
         results = [dict(row) for row in query_job.result()]
         all_results.extend(results)
+
+    # Ensure 'hours_since_update' is present and valid in all results
+    for result in all_results:
+        if "hours_since_update" not in result or result["hours_since_update"] is None:
+            cprint(f"Warning: hours_since_update missing for {result.get('table_id', 'unknown table')}", severity="WARNING")
+            result["hours_since_update"] = float('inf')  # or some default value
+        else:
+            result["hours_since_update"] = float(result["hours_since_update"])
 
     return all_results
 
