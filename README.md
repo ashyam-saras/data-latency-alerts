@@ -109,6 +109,8 @@ These variables can be set in the GitHub repository settings under Environments 
    - `threshold_hours` (INTEGER): Number of hours after which a table is considered outdated
    - `group_by_column` (STRING): Column name to group by (e.g., 'brand')
    - `last_updated_column` (STRING): Column name for the last update timestamp
+   - `created_at` (TIMESTAMP): Timestamp when the configuration was created
+   - `updated_at` (TIMESTAMP): Timestamp when the configuration was last updated
 
 ### Slack Setup
 
