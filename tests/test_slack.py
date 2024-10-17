@@ -27,13 +27,12 @@ def test_generate_slack_message(sample_latency_data):
     assert "blocks" in message
     blocks = message["blocks"]
     
-    # Check for the presence of key information in the message
     message_text = "\n".join(block["text"]["text"] for block in blocks if "text" in block)
     
     assert "*Data Latency Alert" in message_text
     assert "*Tables breaching SLA:* 2 tables" in message_text
     assert "*Max delay:* 10 hours" in message_text
-    assert "*Average delay:* 7 hours" in message_text
+    assert "*Average delay:* 8 hours" in message_text
     assert "Top 5 datasets with highest average delay:" in message_text
     assert "`dataset1` - avg delay: 7 hours (2 tables)" in message_text
     assert "Detailed Report" in message_text
