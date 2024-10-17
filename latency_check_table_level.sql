@@ -3,8 +3,7 @@ WITH config AS (
     dataset,
     table_name,
     threshold_hours,
-    last_updated_column,
-    inclusion_rule
+    last_updated_column
   FROM 
     `{project_name}.{audit_dataset_name}.{latency_params_table}`,
     UNNEST(tables) AS table_name
@@ -32,7 +31,7 @@ SELECT
   ) AS hours_since_update
 FROM 
   `{project_name}.{dataset_id}.__TABLES__` t
-LEFT JOIN 
+INNER JOIN 
   config c
 ON 
   t.table_id = c.table_name
@@ -40,7 +39,6 @@ CROSS JOIN
   dataset_config dc
 WHERE 
   t.type = 1
-  AND (c.inclusion_rule IS NULL OR c.inclusion_rule = 'INCLUDE')
   AND TIMESTAMP_DIFF(
     CURRENT_TIMESTAMP(),
     TIMESTAMP_MILLIS(t.last_modified_time),

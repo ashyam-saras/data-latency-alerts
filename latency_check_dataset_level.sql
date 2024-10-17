@@ -2,8 +2,7 @@ WITH config AS (
   SELECT 
     dataset,
     threshold_hours,
-    last_updated_column,
-    inclusion_rule
+    last_updated_column
   FROM 
     `{project_name}.{audit_dataset_name}.{latency_params_table}`
   WHERE dataset = '{dataset_id}'
@@ -27,7 +26,6 @@ CROSS JOIN
   config c
 WHERE 
   t.type = 1
-  AND (c.inclusion_rule IS NULL OR c.inclusion_rule = 'INCLUDE')
   AND TIMESTAMP_DIFF(
     CURRENT_TIMESTAMP(),
     TIMESTAMP_MILLIS(t.last_modified_time),

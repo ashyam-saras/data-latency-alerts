@@ -10,7 +10,6 @@ WITH config AS (
     UNNEST(tables) AS table_name
   WHERE dataset = '{dataset_id}'
     AND group_by_column IS NOT NULL
-    AND inclusion_rule = 'INCLUDE'
 )
 SELECT 
   '{project_name}' AS project_id,
