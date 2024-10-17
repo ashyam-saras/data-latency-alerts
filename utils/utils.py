@@ -1,6 +1,6 @@
 import base64
 import json
-from typing import Any, Dict, Tuple
+from typing import Any
 
 import pandas as pd
 from google.cloud import bigquery
@@ -9,7 +9,7 @@ from utils import bigquery as bq
 from utils.log import cprint
 
 
-def get_request_params(cloud_event: Dict[str, Any]) -> Dict[str, Any]:
+def get_request_params(cloud_event: dict[str, Any]) -> dict[str, Any]:
     """
     Extract and decode request parameters from a Cloud Event.
 
@@ -37,7 +37,7 @@ def process_data_latency(
     audit_dataset_name: str,
     latency_params_table: str,
     target_dataset: str = None,
-) -> Tuple[list, pd.DataFrame]:
+) -> tuple[list, pd.DataFrame]:
     """
     Process data latency for all datasets or a specific dataset.
 
