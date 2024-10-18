@@ -64,7 +64,18 @@ def process_dataset(
             )
             query_job = client.query(query)
             results = [dict(row) for row in query_job.result()]
-            all_results.extend(results)
+
+            for row in results:
+                if all(
+                    row.get(key) is not None for key in ["project_id", "dataset_id", "table_id", "hours_since_update"]
+                ):
+                    all_results.append(row)
+                else:
+                    cprint(
+                        f"Warning: Incomplete data for table {table} in dataset {dataset}. Skipping this entry.",
+                        severity="WARNING",
+                    )
+
     else:
         # Use table level or dataset level query
         query = LATENCY_CHECK_TABLE_LEVEL if config["tables"] else LATENCY_CHECK_DATASET_LEVEL
