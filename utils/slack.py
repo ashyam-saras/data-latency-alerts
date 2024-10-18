@@ -78,10 +78,9 @@ def generate_slack_message(
     total_tables = len(latency_data)
     if total_tables == 0:
         cprint("No latency data found")
-        message_blocks.append({
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": "No tables found exceeding the latency threshold."}
-        })
+        message_blocks.append(
+            {"type": "section", "text": {"type": "mrkdwn", "text": "No tables found exceeding the latency threshold."}}
+        )
         return {"blocks": message_blocks}
 
     max_hours = max(row.get("hours_since_update", 0) for row in latency_data)
@@ -187,13 +186,14 @@ def send_slack_message(message: dict, channel_id: str, token: str, file_paths: l
         raise
 
 
-def write_to_excel(df: pd.DataFrame, excel_filename: str) -> str:
+def write_to_excel(df: pd.DataFrame, excel_filename: str, date_columns: list[str]) -> str:
     """
     Writes data from DataFrame to Excel and adds a 'Read me' sheet.
 
     Args:
         df: DataFrame which needs to be written into Excel.
         excel_filename: Excel file to which df needs to be written.
+        date_columns: List of column names that should be treated as dates.
 
     Returns:
         str: Name of the Excel file.
@@ -201,16 +201,23 @@ def write_to_excel(df: pd.DataFrame, excel_filename: str) -> str:
     try:
         cprint("Starting Excel file writing process")
 
-        # Convert timezone-aware datetimes to timezone-naive UTC
-        for column in df.select_dtypes(include=['datetime64[ns, UTC]', 'datetime64[ns]']).columns:
-            df[column] = df[column].dt.tz_localize(None)
+        # Convert specified date columns to timezone-naive UTC
+        for column in date_columns:
+            if column in df.columns:
+                if pd.api.types.is_datetime64_any_dtype(df[column]):
+                    df[column] = df[column].dt.tz_convert("UTC").dt.tz_localize(None)
+                else:
+                    df[column] = pd.to_datetime(df[column], utc=True).dt.tz_localize(None)
+                cprint(f"Converted {column} to timezone-naive UTC")
+            else:
+                cprint(f"Specified date column '{column}' not found in DataFrame", severity="WARNING")
 
         with pd.ExcelWriter(excel_filename, engine="openpyxl") as writer:
             df.to_excel(writer, sheet_name="Results", index=False)
 
             read_me_data = {
                 "Results Sheet": "This sheet provides details on tables that haven't been updated within the specified threshold.",
-                "Recommendation": "Please review the 'Results' sheet to identify tables that may need attention. If any tables fall outside the defined threshold, consider investigating and taking appropriate actions."
+                "Recommendation": "Please review the 'Results' sheet to identify tables that may need attention. If any tables fall outside the defined threshold, consider investigating and taking appropriate actions.",
             }
             read_me_df = pd.DataFrame(list(read_me_data.items()), columns=["Sheet", "Info"])
             read_me_df.to_excel(writer, sheet_name="Read me", index=False)

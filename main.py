@@ -54,7 +54,8 @@ def latency_alert(request: Request):
 
         if latency_data:
             df = pd.DataFrame(latency_data)
-            excel_filename = slack.write_to_excel(df, "/tmp/latency_data.xlsx")
+            date_columns = ['last_modified_time']
+            excel_filename = slack.write_to_excel(df, "/tmp/latency_data.xlsx", date_columns)
             message = slack.generate_slack_message(latency_data, target_dataset, error_message=error_message)
             slack.send_slack_message(message, channel_id, token, [excel_filename])
             cprint("Data latency alert processed and sent successfully")
