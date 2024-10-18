@@ -206,12 +206,11 @@ def test_write_to_excel(tmp_path):
         "date_col": [pd.Timestamp('2023-01-01', tz='UTC'), pd.Timestamp('2023-01-02', tz='UTC')]
     })
     excel_file = tmp_path / "test.xlsx"
+    date_columns = ['date_col']
 
-    result = write_to_excel(df, str(excel_file))
+    result = write_to_excel(df, str(excel_file), date_columns)
 
     assert os.path.exists(result)
-
-    # Read the Excel file and check its contents
     with pd.ExcelFile(result) as xls:
         assert "Results" in xls.sheet_names
         assert "Read me" in xls.sheet_names
@@ -246,8 +245,9 @@ def test_write_to_excel_with_non_utc_timezone(tmp_path):
         "date_col": [pd.Timestamp('2023-01-01', tz='US/Eastern'), pd.Timestamp('2023-01-02', tz='US/Pacific')]
     })
     excel_file = tmp_path / "test.xlsx"
+    date_columns = ['date_col']
 
-    result = write_to_excel(df, str(excel_file))
+    result = write_to_excel(df, str(excel_file), date_columns)
 
     assert os.path.exists(result)
     with pd.ExcelFile(result) as xls:
@@ -257,3 +257,23 @@ def test_write_to_excel_with_non_utc_timezone(tmp_path):
         # Check that the dates are correct (now in UTC)
         assert results_df['date_col'][0] == pd.Timestamp('2023-01-01 05:00:00')  # UTC equivalent of 2023-01-01 00:00:00 US/Eastern
         assert results_df['date_col'][1] == pd.Timestamp('2023-01-02 08:00:00')  # UTC equivalent of 2023-01-02 00:00:00 US/Pacific
+
+def test_write_to_excel_with_missing_date_column(tmp_path):
+    """
+    Tests writing data when a specified date column is missing from the DataFrame.
+    Ensures the function handles this gracefully.
+    """
+    df = pd.DataFrame({
+        "col1": [1, 2],
+        "col2": [3, 4],
+    })
+    excel_file = tmp_path / "test.xlsx"
+    date_columns = ['non_existent_date_col']
+
+    result = write_to_excel(df, str(excel_file), date_columns)
+
+    assert os.path.exists(result)
+    with pd.ExcelFile(result) as xls:
+        results_df = pd.read_excel(xls, "Results")
+        assert results_df.shape == df.shape
+        assert all(results_df.columns == df.columns)
