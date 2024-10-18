@@ -74,17 +74,18 @@ def generate_slack_message(
         )
         return {"blocks": message_blocks}
 
-    # Remove duplicates and handle group_by cases
-    unique_data = {}
-    for row in latency_data:
-        key = (row["dataset_id"], row["table_id"], row.get("group_by_value", ""))
-        if key not in unique_data or row["hours_since_update"] > unique_data[key]["hours_since_update"]:
-            unique_data[key] = row
-    latency_data = list(unique_data.values())
-
+    # Calculate summary statistics
     total_tables = len(latency_data)
-    max_hours = max(row["hours_since_update"] for row in latency_data)
-    avg_hours = sum(row["hours_since_update"] for row in latency_data) / total_tables
+    if total_tables == 0:
+        cprint("No latency data found")
+        message_blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "No tables found exceeding the latency threshold."}
+        })
+        return {"blocks": message_blocks}
+
+    max_hours = max(row.get("hours_since_update", 0) for row in latency_data)
+    avg_hours = sum(row.get("hours_since_update", 0) for row in latency_data) / total_tables
 
     # Group by dataset and calculate average delay
     dataset_stats = defaultdict(lambda: {"count": 0, "total_hours": 0})
@@ -198,19 +199,18 @@ def write_to_excel(df: pd.DataFrame, excel_filename: str) -> str:
         str: Name of the Excel file.
     """
     try:
+        cprint("Starting Excel file writing process")
+
         # Convert timezone-aware datetimes to timezone-naive UTC
-        for column in df.select_dtypes(include=["datetime64[ns, UTC]", "datetime64[ns]", "object"]).columns:
-            if pd.api.types.is_datetime64_any_dtype(df[column]):
-                df[column] = df[column].dt.tz_convert("UTC").dt.tz_localize(None)
-            elif pd.api.types.is_object_dtype(df[column]):
-                df[column] = pd.to_datetime(df[column], utc=True).dt.tz_localize(None)
+        for column in df.select_dtypes(include=['datetime64[ns, UTC]', 'datetime64[ns]']).columns:
+            df[column] = df[column].dt.tz_localize(None)
 
         with pd.ExcelWriter(excel_filename, engine="openpyxl") as writer:
             df.to_excel(writer, sheet_name="Results", index=False)
 
             read_me_data = {
                 "Results Sheet": "This sheet provides details on tables that haven't been updated within the specified threshold.",
-                "Recommendation": "Please review the 'Results' sheet to identify tables that may need attention. If any tables fall outside the defined threshold, consider investigating and taking appropriate actions. If you think any of these tables need to be excluded, please update the same in Audit.latency_alerts_parms table",
+                "Recommendation": "Please review the 'Results' sheet to identify tables that may need attention. If any tables fall outside the defined threshold, consider investigating and taking appropriate actions."
             }
             read_me_df = pd.DataFrame(list(read_me_data.items()), columns=["Sheet", "Info"])
             read_me_df.to_excel(writer, sheet_name="Read me", index=False)
