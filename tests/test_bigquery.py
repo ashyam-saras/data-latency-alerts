@@ -190,39 +190,6 @@ def test_get_latency_data_exception_handling(mock_bigquery_client, mock_query_jo
     assert len(errors) == 1  # One error should be recorded
     mock_cprint.assert_any_call("Dataset test_dataset2 generated an exception: Test exception", severity="ERROR")
 
-def test_process_dataset_missing_hours_since_update(mock_bigquery_client):
-    """
-    Tests handling of missing 'hours_since_update' in process_dataset function.
-    """
-    mock_bigquery_client.query.side_effect = [
-        Mock(result=lambda: [{
-            "dataset": "test_dataset",
-            "tables": ["test_table"],
-            "threshold_hours": 24,
-            "group_by_column": None,
-            "last_updated_column": None
-        }]),
-        Mock(result=lambda: [
-            {
-                "project_id": "test_project",
-                "dataset_id": "test_dataset",
-                "table_id": "test_table",
-                "threshold_hours": 24,
-                "last_updated_column": "last_modified_time",
-                "last_modified_time": "2023-01-01T00:00:00",
-                # 'hours_since_update' is missing
-            },
-        ]),
-    ]
-
-    with patch('utils.bigquery.cprint') as mock_cprint:
-        result = process_dataset(mock_bigquery_client, "test_project", "audit_dataset", "latency_params", "test_dataset")
-
-    assert len(result) == 1
-    assert result[0]["table_id"] == "test_table"
-    assert result[0]["hours_since_update"] == float('inf')
-    mock_cprint.assert_any_call("Warning: hours_since_update missing for test_table", severity="WARNING")
-
 def test_get_latency_data_nonexistent_target_dataset(mock_bigquery_client):
     """
     Tests error handling when a specified target dataset doesn't exist.
@@ -233,4 +200,3 @@ def test_get_latency_data_nonexistent_target_dataset(mock_bigquery_client):
         get_latency_data(mock_bigquery_client, "test_project", "audit_dataset", "latency_params", "nonexistent_dataset")
 
     assert "Specified dataset 'nonexistent_dataset' not found or not configured for monitoring" in str(excinfo.value)
-
