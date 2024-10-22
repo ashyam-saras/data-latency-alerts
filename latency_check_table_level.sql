@@ -24,6 +24,7 @@ SELECT
   COALESCE(c.threshold_hours, dc.threshold_hours) AS threshold_hours,
   c.last_updated_column AS last_updated_column,
   TIMESTAMP_MILLIS(t.last_modified_time) AS last_modified_time,
+  CURRENT_TIMESTAMP() AS current_time,
   TIMESTAMP_DIFF(
     CURRENT_TIMESTAMP(),
     TIMESTAMP_MILLIS(t.last_modified_time),
@@ -31,7 +32,7 @@ SELECT
   ) AS hours_since_update
 FROM 
   `{project_name}.{dataset_id}.__TABLES__` t
-INNER JOIN 
+LEFT JOIN 
   config c
 ON 
   t.table_id = c.table_name

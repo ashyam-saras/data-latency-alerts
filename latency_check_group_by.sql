@@ -19,6 +19,7 @@ SELECT
   c.group_by_column,
   c.last_updated_column,
   MAX(PARSE_TIMESTAMP('%Y-%m-%d %H:%M:%E*S%Ez', CAST({last_updated_column} AS STRING))) AS last_modified_time,
+  CURRENT_TIMESTAMP() AS current_time,
   TIMESTAMP_DIFF(
     CURRENT_TIMESTAMP(),
     MAX(PARSE_TIMESTAMP('%Y-%m-%d %H:%M:%E*S%Ez', CAST({last_updated_column} AS STRING))),

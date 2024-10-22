@@ -15,6 +15,7 @@ SELECT
   c.threshold_hours,
   c.last_updated_column AS last_updated_column,
   TIMESTAMP_MILLIS(t.last_modified_time) AS last_modified_time,
+  CURRENT_TIMESTAMP() AS current_time,
   TIMESTAMP_DIFF(
     CURRENT_TIMESTAMP(),
     TIMESTAMP_MILLIS(t.last_modified_time),
@@ -30,6 +31,6 @@ WHERE
     CURRENT_TIMESTAMP(),
     TIMESTAMP_MILLIS(t.last_modified_time),
     HOUR
-  ) >= c.threshold_hours
+  ) > c.threshold_hours
 ORDER BY 
   hours_since_update DESC
