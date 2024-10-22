@@ -22,7 +22,7 @@ SELECT
   t.dataset_id,
   t.table_id,
   COALESCE(c.threshold_hours, dc.threshold_hours) AS threshold_hours,
-  COALESCE(c.last_updated_column, 'last_modified_time') AS last_updated_column,
+  c.last_updated_column AS last_updated_column,
   TIMESTAMP_MILLIS(t.last_modified_time) AS last_modified_time,
   TIMESTAMP_DIFF(
     CURRENT_TIMESTAMP(),
