@@ -32,12 +32,14 @@ SELECT
   ) AS hours_since_update
 FROM 
   `{project_name}.{dataset_id}.__TABLES__` t
-LEFT JOIN 
+INNER JOIN 
   config c
 ON 
   t.table_id = c.table_name
-CROSS JOIN
+LEFT JOIN
   dataset_config dc
+ON 
+  t.dataset_id = dc.dataset
 WHERE 
   t.type = 1
   AND TIMESTAMP_DIFF(
