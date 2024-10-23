@@ -46,39 +46,40 @@ def process_dataset(
     WHERE dataset = '{dataset}'
     """
     config_job = client.query(config_query)
-    config = list(config_job.result())[0]
+    configs = list(config_job.result())
 
     all_results = []
 
-    if config["group_by_column"] and config["last_updated_column"]:
-        # Use group by query
-        for table in config["tables"]:
-            query = LATENCY_CHECK_GROUP_BY.format(
+    for config in configs:
+        if config["group_by_column"] and config["last_updated_column"]:
+            # Use group by query
+            for table in config["tables"]:
+                query = LATENCY_CHECK_GROUP_BY.format(
+                    project_name=project_name,
+                    audit_dataset_name=audit_dataset_name,
+                    latency_params_table=latency_params_table,
+                    dataset_id=dataset,
+                    table_id=table,
+                    group_by_column=config["group_by_column"],
+                    last_updated_column=config["last_updated_column"],
+                )
+                query_job = client.query(query)
+                results = [dict(row) for row in query_job.result()]
+                for row in results:
+                    row["last_updated_column"] = config["last_updated_column"]
+                    all_results.extend(results)
+        else:
+            # Use table level or dataset level query
+            query = LATENCY_CHECK_TABLE_LEVEL if config["tables"] else LATENCY_CHECK_DATASET_LEVEL
+            query = query.format(
                 project_name=project_name,
                 audit_dataset_name=audit_dataset_name,
                 latency_params_table=latency_params_table,
                 dataset_id=dataset,
-                table_id=table,
-                group_by_column=config["group_by_column"],
-                last_updated_column=config["last_updated_column"],
             )
             query_job = client.query(query)
             results = [dict(row) for row in query_job.result()]
-            for row in results:
-                row["last_updated_column"] = config["last_updated_column"]
             all_results.extend(results)
-    else:
-        # Use table level or dataset level query
-        query = LATENCY_CHECK_TABLE_LEVEL if config["tables"] else LATENCY_CHECK_DATASET_LEVEL
-        query = query.format(
-            project_name=project_name,
-            audit_dataset_name=audit_dataset_name,
-            latency_params_table=latency_params_table,
-            dataset_id=dataset,
-        )
-        query_job = client.query(query)
-        results = [dict(row) for row in query_job.result()]
-        all_results.extend(results)
 
     return all_results
 
