@@ -52,7 +52,6 @@ def process_dataset(
 
     for config in configs:
         if config["group_by_column"] and config["last_updated_column"]:
-            # Use group by query
             for table in config["tables"]:
                 query = LATENCY_CHECK_GROUP_BY.format(
                     project_name=project_name,
@@ -65,9 +64,7 @@ def process_dataset(
                 )
                 query_job = client.query(query)
                 results = [dict(row) for row in query_job.result()]
-                for row in results:
-                    row["last_updated_column"] = config["last_updated_column"]
-                    all_results.extend(results)
+                all_results.extend(results)
         else:
             # Use table level or dataset level query
             query = LATENCY_CHECK_TABLE_LEVEL if config["tables"] else LATENCY_CHECK_DATASET_LEVEL
