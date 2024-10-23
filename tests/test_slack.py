@@ -1,11 +1,12 @@
 import os
 from unittest.mock import Mock, patch, mock_open
+from datetime import datetime, timezone, timedelta
 
 import pandas as pd
 import pytest
 from slack_sdk.errors import SlackApiError
 
-from utils.slack import generate_slack_message, send_slack_message, write_to_excel
+from utils.slack import generate_slack_message, send_slack_message, write_to_excel, calculate_time_period
 
 
 @pytest.fixture
@@ -15,6 +16,51 @@ def sample_latency_data():
         {"dataset_id": "dataset1", "table_id": "table1", "hours_since_update": 5},
         {"dataset_id": "dataset1", "table_id": "table2", "hours_since_update": 10},
     ]
+
+
+def test_calculate_time_period():
+    """Test calculate_time_period function with various inputs."""
+    assert calculate_time_period(5) == "5 hours"
+    assert calculate_time_period(25) == "25 hours (≈ 1 day)"
+    assert calculate_time_period(50) == "50 hours (≈ 2 days)"
+    assert calculate_time_period(750) == "750 hours (≈ 1 month)"
+    assert calculate_time_period(1500) == "1500 hours (≈ 2 months)"
+
+    # Test with datetime input
+    now = datetime.now(timezone.utc)
+    five_hours_ago = now - timedelta(hours=5)
+    assert calculate_time_period(five_hours_ago) == "5 hours"
+
+    # Test with pandas Timestamp input
+    now_pd = pd.Timestamp.now(tz='UTC')
+    five_hours_ago_pd = now_pd - pd.Timedelta(hours=5)
+    assert calculate_time_period(five_hours_ago_pd) == "5 hours"
+
+    # Test with a pandas Timestamp in a different timezone
+    five_hours_ago_est = pd.Timestamp.now(tz='US/Eastern') - pd.Timedelta(hours=5)
+    result = calculate_time_period(five_hours_ago_est)
+    assert result == "5 hours", f"Expected '5 hours', but got '{result}'"
+
+    # Test with a future pandas Timestamp
+    five_hours_future = now_pd + pd.Timedelta(hours=5)
+    result = calculate_time_period(five_hours_future)
+    assert result == "0 hours", f"Expected '0 hours', but got '{result}'"
+
+    # Test with exactly now
+    result = calculate_time_period(now_pd)
+    assert result == "0 hours", f"Expected '0 hours', but got '{result}'"
+
+    # Test with a large future time
+    one_year_future = now_pd + pd.Timedelta(days=365)
+    result = calculate_time_period(one_year_future)
+    assert result == "0 hours", f"Expected '0 hours', but got '{result}'"
+
+    # Test with a pandas Timestamp from a specific date
+    specific_date = pd.Timestamp('2023-01-01 12:00:00', tz='UTC')
+    hours_diff = (pd.Timestamp.now(tz='UTC') - specific_date).total_seconds() / 3600
+    expected_result = calculate_time_period(hours_diff)
+    result = calculate_time_period(specific_date)
+    assert result == expected_result, f"Expected '{expected_result}', but got '{result}'"
 
 
 def test_generate_slack_message(sample_latency_data):
@@ -27,13 +73,12 @@ def test_generate_slack_message(sample_latency_data):
     assert "blocks" in message
     blocks = message["blocks"]
     
-    # Check for the presence of key information in the message
     message_text = "\n".join(block["text"]["text"] for block in blocks if "text" in block)
     
     assert "*Data Latency Alert" in message_text
     assert "*Tables breaching SLA:* 2 tables" in message_text
     assert "*Max delay:* 10 hours" in message_text
-    assert "*Average delay:* 7 hours" in message_text
+    assert "*Average delay:* 8 hours" in message_text
     assert "Top 5 datasets with highest average delay:" in message_text
     assert "`dataset1` - avg delay: 7 hours (2 tables)" in message_text
     assert "Detailed Report" in message_text
@@ -63,6 +108,39 @@ def test_generate_slack_message_specific_dataset(sample_latency_data):
     blocks = message["blocks"]
     message_text = "\n".join(block["text"]["text"] for block in blocks if "text" in block)
     assert "Data Latency Alert for dataset test_dataset" in message_text
+
+
+def test_generate_slack_message_with_error():
+    """
+    Tests message generation when an error message is provided.
+    Ensures the error message is included in the Slack message.
+    """
+    error_message = "Test error occurred"
+    message = generate_slack_message([], error_message=error_message)
+    assert isinstance(message, dict)
+    assert "blocks" in message
+    blocks = message["blocks"]
+    message_text = "\n".join(block["text"]["text"] for block in blocks if "text" in block)
+    assert "Error encountered during processing" in message_text
+    assert error_message in message_text
+
+
+def test_generate_slack_message_group_by(sample_latency_data):
+    """
+    Tests message generation with group_by data.
+    Ensures group_by values are correctly handled.
+    """
+    group_by_data = sample_latency_data + [
+        {"dataset_id": "dataset1", "table_id": "table1", "hours_since_update": 15, "group_by_value": "group1"},
+        {"dataset_id": "dataset1", "table_id": "table1", "hours_since_update": 20, "group_by_value": "group2"},
+    ]
+    message = generate_slack_message(group_by_data)
+    assert isinstance(message, dict)
+    assert "blocks" in message
+    blocks = message["blocks"]
+    message_text = "\n".join(block["text"]["text"] for block in blocks if "text" in block)
+    assert "*Max delay:* 20 hours" in message_text
+    assert "*Tables breaching SLA:* 4 tables" in message_text
 
 
 @patch("utils.slack.WebClient")
@@ -122,20 +200,25 @@ def test_write_to_excel(tmp_path):
     Tests writing data to an Excel file.
     Ensures correct file creation and content, including the 'Read me' sheet.
     """
-    df = pd.DataFrame({"col1": [1, 2], "col2": [3, 4]})
+    df = pd.DataFrame({
+        "col1": [1, 2],
+        "col2": [3, 4],
+        "date_col": [pd.Timestamp('2023-01-01', tz='UTC'), pd.Timestamp('2023-01-02', tz='UTC')]
+    })
     excel_file = tmp_path / "test.xlsx"
+    date_columns = ['date_col']
 
-    result = write_to_excel(df, str(excel_file))
+    result = write_to_excel(df, str(excel_file), date_columns)
 
     assert os.path.exists(result)
-
-    # Read the Excel file and check its contents
     with pd.ExcelFile(result) as xls:
         assert "Results" in xls.sheet_names
         assert "Read me" in xls.sheet_names
 
         results_df = pd.read_excel(xls, "Results")
-        assert results_df.equals(df)
+        assert results_df.shape == df.shape
+        assert all(results_df.columns == df.columns)
+        assert results_df['date_col'].dtype == 'datetime64[ns]'  # Ensure timezone info is removed
 
         read_me_df = pd.read_excel(xls, "Read me")
         assert "Results Sheet" in read_me_df["Sheet"].values
@@ -151,3 +234,46 @@ def test_write_to_excel_error():
 
     with pytest.raises(Exception):
         write_to_excel(df, "/nonexistent/path/test.xlsx")
+
+
+def test_write_to_excel_with_non_utc_timezone(tmp_path):
+    """
+    Tests writing data with non-UTC timezone to Excel.
+    Ensures correct handling of different timezones.
+    """
+    df = pd.DataFrame({
+        "date_col": [pd.Timestamp('2023-01-01', tz='US/Eastern'), pd.Timestamp('2023-01-02', tz='US/Pacific')]
+    })
+    excel_file = tmp_path / "test.xlsx"
+    date_columns = ['date_col']
+
+    result = write_to_excel(df, str(excel_file), date_columns)
+
+    assert os.path.exists(result)
+    with pd.ExcelFile(result) as xls:
+        results_df = pd.read_excel(xls, "Results")
+        assert results_df['date_col'].dtype == 'datetime64[ns]'  # Ensure timezone info is removed
+        assert len(results_df) == 2
+        # Check that the dates are correct (now in UTC)
+        assert results_df['date_col'][0] == pd.Timestamp('2023-01-01 05:00:00')  # UTC equivalent of 2023-01-01 00:00:00 US/Eastern
+        assert results_df['date_col'][1] == pd.Timestamp('2023-01-02 08:00:00')  # UTC equivalent of 2023-01-02 00:00:00 US/Pacific
+
+def test_write_to_excel_with_missing_date_column(tmp_path):
+    """
+    Tests writing data when a specified date column is missing from the DataFrame.
+    Ensures the function handles this gracefully.
+    """
+    df = pd.DataFrame({
+        "col1": [1, 2],
+        "col2": [3, 4],
+    })
+    excel_file = tmp_path / "test.xlsx"
+    date_columns = ['non_existent_date_col']
+
+    result = write_to_excel(df, str(excel_file), date_columns)
+
+    assert os.path.exists(result)
+    with pd.ExcelFile(result) as xls:
+        results_df = pd.read_excel(xls, "Results")
+        assert results_df.shape == df.shape
+        assert all(results_df.columns == df.columns)

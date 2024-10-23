@@ -17,14 +17,10 @@ on:
         required: false
         default: "Asia/Kolkata"
 
-env:
-  PROJECT_NAME: ${{ vars.PROJECT_NAME }}
-  SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
-  SLACK_API_TOKEN: ${{ secrets.SLACK_API_TOKEN }}
-
 jobs:
   deploy-scheduler:
     runs-on: ubuntu-latest
+    environment: Production
 
     steps:
     - name: Checkout code
@@ -41,7 +37,7 @@ jobs:
     - name: Check if job exists
       id: check_job
       run: |
-        JOB_EXISTS=$(gcloud scheduler jobs list --project=${{ env.PROJECT_NAME }} --location=us-central1 --format="value(name)" | grep -c "data-latency-alerts-scheduler" || true)
+        JOB_EXISTS=$(gcloud scheduler jobs list --project=${{ vars.PROJECT_NAME }} --location=us-central1 --format="value(name)" | grep -c "data-latency-alerts-scheduler" || true)
         if [ "$JOB_EXISTS" -gt "0" ]; then
           echo "job_exists=true" >> $GITHUB_OUTPUT
           echo "Job exists"
@@ -56,13 +52,13 @@ jobs:
         gcloud scheduler jobs create http data-latency-alerts-scheduler \
           --schedule="${{ github.event.inputs.SCHEDULE || '0 */6 * * *' }}" \
           --time-zone="${{ github.event.inputs.TIMEZONE || 'Asia/Kolkata' }}" \
-          --uri="https://us-central1-${{ env.PROJECT_NAME }}.cloudfunctions.net/data-latency-alerts" \
+          --uri="https://us-central1-${{ vars.PROJECT_NAME }}.cloudfunctions.net/data-latency-alerts" \
           --http-method=POST \
           --attempt-deadline=1800s \
           --headers="Content-Type=application/json" \
-          --message-body='{"channel_id": "${{ env.SLACK_CHANNEL_ID }}", "slack_token": "${{ env.SLACK_API_TOKEN }}"}' \
+          --message-body='{"channel_id": "${{ vars.SLACK_CHANNEL_ID }}", "slack_token": "${{ secrets.SLACK_API_TOKEN }}"}' \
           --description="Triggers the data latency alerts function every 6 hours to check for outdated tables" \
-          --project=${{ env.PROJECT_NAME }} \
+          --project=${{ vars.PROJECT_NAME }} \
           --location=us-central1
         echo "Cloud Scheduler job created successfully"
 
@@ -72,18 +68,18 @@ jobs:
         gcloud scheduler jobs update http data-latency-alerts-scheduler \
           --schedule="${{ github.event.inputs.SCHEDULE || '0 */6 * * *' }}" \
           --time-zone="${{ github.event.inputs.TIMEZONE || 'Asia/Kolkata' }}" \
-          --uri="https://us-central1-${{ env.PROJECT_NAME }}.cloudfunctions.net/data-latency-alerts" \
+          --uri="https://us-central1-${{ vars.PROJECT_NAME }}.cloudfunctions.net/data-latency-alerts" \
           --http-method=POST \
           --attempt-deadline=1800s \
           --update-headers "Content-Type=application/json" \
-          --message-body='{"channel_id": "${{ env.SLACK_CHANNEL_ID }}", "slack_token": "${{ env.SLACK_API_TOKEN }}"}' \
+          --message-body='{"channel_id": "${{ vars.SLACK_CHANNEL_ID }}", "slack_token": "${{ secrets.SLACK_API_TOKEN }}"}' \
           --description="Triggers the data latency alerts function every 6 hours to check for outdated tables" \
-          --project=${{ env.PROJECT_NAME }} \
+          --project=${{ vars.PROJECT_NAME }} \
           --location=us-central1
         echo "Cloud Scheduler job updated successfully"
 
     - name: Verify Scheduler Job
       run: |
         gcloud scheduler jobs describe data-latency-alerts-scheduler \
-          --project=${{ env.PROJECT_NAME }} \
+          --project=${{ vars.PROJECT_NAME }} \
           --location=us-central1
