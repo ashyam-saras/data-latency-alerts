@@ -23,8 +23,10 @@ SELECT
   ) AS hours_since_update
 FROM 
   `{project_name}.{dataset_id}.__TABLES__` t
-CROSS JOIN 
+INNER JOIN 
   config c
+ON 
+  t.dataset_id = c.dataset
 WHERE 
   t.type = 1
   AND TIMESTAMP_DIFF(
