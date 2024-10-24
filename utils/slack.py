@@ -124,7 +124,7 @@ def generate_slack_message(
                     "text": "*Top 5 datasets with highest average delay:*\n"
                     + "\n".join(
                         [
-                            f"{i+1}. `{dataset}` - avg delay: {calculate_time_period(int(info['avg_hours']))} ({info['count']} tables)"
+                            f"{i+1}. `{dataset}` - {info['count']} tables (avg delay: {calculate_time_period(int(info['avg_hours']))})"
                             for i, (dataset, info) in enumerate(top_datasets)
                         ]
                     ),

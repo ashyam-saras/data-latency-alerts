@@ -80,7 +80,7 @@ def test_generate_slack_message(sample_latency_data):
     assert "*Max delay:* 10 hours" in message_text
     assert "*Average delay:* 8 hours" in message_text
     assert "Top 5 datasets with highest average delay:" in message_text
-    assert "`dataset1` - avg delay: 7 hours (2 tables)" in message_text
+    assert "`dataset1` - 2 tables (avg delay: 7 hours)" in message_text
     assert "Detailed Report" in message_text
 
 
