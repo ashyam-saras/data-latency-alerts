@@ -4,10 +4,10 @@ from unittest.mock import Mock, patch
 
 import pandas as pd
 import pytest
+from freezegun import freeze_time
 from google.cloud import bigquery
 
-from utils import bigquery as bq
-from utils.utils import get_request_params, process_data_latency
+from utils.utils import generate_timestamped_filename, get_request_params, process_data_latency
 
 
 def test_get_request_params_success():
@@ -52,7 +52,7 @@ def test_process_data_latency(mock_get_latency_data):
         mock_client,
         project_name="test_project",
         audit_dataset_name="test_audit_dataset",
-        latency_params_table="test_params_table"
+        latency_params_table="test_params_table",
     )
 
     assert latency_data == mock_latency_data
@@ -73,7 +73,7 @@ def test_process_data_latency_specific_dataset(mock_get_latency_data):
         project_name="test_project",
         audit_dataset_name="test_audit_dataset",
         latency_params_table="test_params_table",
-        target_dataset="test_dataset"
+        target_dataset="test_dataset",
     )
 
     mock_get_latency_data.assert_called_once_with(
@@ -95,7 +95,7 @@ def test_process_data_latency_empty_result():
             mock_client,
             project_name="test_project",
             audit_dataset_name="test_audit_dataset",
-            latency_params_table="test_params_table"
+            latency_params_table="test_params_table",
         )
 
     assert latency_data == []
@@ -117,10 +117,50 @@ def test_process_data_latency_various_data_types(mock_get_latency_data):
         mock_client,
         project_name="test_project",
         audit_dataset_name="test_audit_dataset",
-        latency_params_table="test_params_table"
+        latency_params_table="test_params_table",
     )
 
     assert latency_data == mock_latency_data
     assert isinstance(df, pd.DataFrame)
     assert len(df) == 3
     assert set(df.columns) == {"table", "latency", "extra_field"}
+
+
+def test_generate_timestamped_filename_basic():
+    """Test basic filename generation with default timezone offset."""
+    base_path = "/tmp/test.txt"
+    with freeze_time("2024-01-01 12:00:00"):
+        result = generate_timestamped_filename(base_path)
+        assert result == "/tmp/test_20240101_173000.txt"
+
+
+def test_generate_timestamped_filename_with_custom_tz():
+    """Test filename generation with custom timezone offset."""
+    base_path = "/tmp/test.xlsx"
+    with freeze_time("2024-01-01 12:00:00"):
+        result = generate_timestamped_filename(base_path, tz_offset=(0, 0))  # UTC
+        assert result == "/tmp/test_20240101_120000.xlsx"
+
+
+def test_generate_timestamped_filename_with_complex_path():
+    """Test filename generation with complex file paths."""
+    base_path = "/tmp/path/to/my.complex.file.txt"
+    with freeze_time("2024-01-01 12:00:00"):
+        result = generate_timestamped_filename(base_path)
+        assert result == "/tmp/path/to/my.complex.file_20240101_173000.txt"
+
+
+def test_generate_timestamped_filename_no_extension():
+    """Test filename generation for files without extensions."""
+    base_path = "/tmp/testfile"
+    with freeze_time("2024-01-01 12:00:00"):
+        result = generate_timestamped_filename(base_path)
+        assert result == "/tmp/testfile_20240101_173000"
+
+
+def test_generate_timestamped_filename_negative_offset():
+    """Test filename generation with negative timezone offset."""
+    base_path = "/tmp/test.txt"
+    with freeze_time("2024-01-01 12:00:00"):
+        result = generate_timestamped_filename(base_path, tz_offset=(-4, 0))  # UTC-4
+        assert result == "/tmp/test_20240101_080000.txt"
