@@ -1,5 +1,7 @@
 import base64
 import json
+import os
+from datetime import datetime, timezone as dt_timezone, timedelta, UTC
 from typing import Any
 
 import pandas as pd
@@ -7,6 +9,22 @@ from google.cloud import bigquery
 
 from utils import bigquery as bq
 from utils.log import cprint
+
+
+def generate_timestamped_filename(base_path: str, tz_offset: tuple[int, int] = (5, 30)) -> str:
+    """
+    Generate a timestamped filename by adding a timestamp before the file extension.
+    Default timezone offset is for IST (+5:30).
+    """
+    offset = timedelta(hours=tz_offset[0], minutes=tz_offset[1])
+    tz = dt_timezone(offset)
+    
+    current_time = datetime.now(UTC)  # UTC is the default timezone
+    local_time = current_time.astimezone(tz)  # Convert to target timezone
+
+    base, ext = os.path.splitext(base_path)
+    timestamp = local_time.strftime(r"%Y%m%d_%H%M%S")
+    return f"{base}_{timestamp}{ext}"
 
 
 def get_request_params(cloud_event: dict[str, Any]) -> dict[str, Any]:
