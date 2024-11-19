@@ -1,7 +1,8 @@
 import base64
 import json
 import os
-from datetime import datetime, timezone as dt_timezone, timedelta, UTC
+from datetime import UTC, datetime, timedelta
+from datetime import timezone as dt_timezone
 from typing import Any
 
 import pandas as pd
@@ -18,7 +19,7 @@ def generate_timestamped_filename(base_path: str, tz_offset: tuple[int, int] = (
     """
     offset = timedelta(hours=tz_offset[0], minutes=tz_offset[1])
     tz = dt_timezone(offset)
-    
+
     current_time = datetime.now(UTC)  # UTC is the default timezone
     local_time = current_time.astimezone(tz)  # Convert to target timezone
 

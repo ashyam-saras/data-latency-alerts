@@ -1,5 +1,6 @@
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 from dotenv import load_dotenv
@@ -12,7 +13,8 @@ load_dotenv()
 
 
 def get_query_content(filename):
-    with open(filename, "r") as file:
+    sql_dir = Path(__file__).parent.parent / "sql"
+    with open(sql_dir / filename, "r") as file:
         return file.read()
 
 
