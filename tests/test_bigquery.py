@@ -1,24 +1,18 @@
-import os
-from unittest.mock import Mock, call, patch
 from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock, patch
 
 import pytest
 from google.cloud import bigquery
 
-from utils.bigquery import (
-    LATENCY_CHECK_GROUP_BY,
-    LATENCY_CHECK_TABLE_LEVEL,
-    LATENCY_CHECK_DATASET_LEVEL,
-    MAX_WORKERS,
-    get_latency_data,
-    process_dataset,
-)
+from utils.bigquery import MAX_WORKERS, get_latency_data, process_dataset
+
 
 # Fixtures
 @pytest.fixture
 def mock_bigquery_client():
     """Fixture to create a mock BigQuery client."""
     return Mock(spec=bigquery.Client)
+
 
 @pytest.fixture
 def mock_query_job():
@@ -30,6 +24,7 @@ def mock_query_job():
     ]
     return mock_job
 
+
 def test_process_dataset(mock_bigquery_client):
     """
     Verifies that a single dataset is processed correctly.
@@ -37,33 +32,39 @@ def test_process_dataset(mock_bigquery_client):
     """
     current_time = datetime.now(timezone.utc)
     mock_bigquery_client.query.side_effect = [
-        Mock(result=lambda: [{
-            "dataset": "test_dataset1",
-            "tables": None,
-            "threshold_hours": 24,
-            "group_by_column": None,
-            "last_updated_column": None
-        }]),
-        Mock(result=lambda: [
-            {
-                "project_id": "test_project",
-                "dataset_id": "test_dataset1",
-                "table_id": "test_table1",
-                "threshold_hours": 24,
-                "last_updated_column": "last_modified_time",
-                "last_modified_time": current_time - timedelta(hours=12),
-                "hours_since_update": 12,
-            },
-            {
-                "project_id": "test_project",
-                "dataset_id": "test_dataset1",
-                "table_id": "test_table2",
-                "threshold_hours": 24,
-                "last_updated_column": "last_modified_time",
-                "last_modified_time": current_time - timedelta(hours=36),
-                "hours_since_update": 36,
-            },
-        ]),
+        Mock(
+            result=lambda: [
+                {
+                    "dataset": "test_dataset1",
+                    "tables": None,
+                    "threshold_hours": 24,
+                    "group_by_column": None,
+                    "last_updated_column": None,
+                }
+            ]
+        ),
+        Mock(
+            result=lambda: [
+                {
+                    "project_id": "test_project",
+                    "dataset_id": "test_dataset1",
+                    "table_id": "test_table1",
+                    "threshold_hours": 24,
+                    "last_updated_column": "last_modified_time",
+                    "last_modified_time": current_time - timedelta(hours=12),
+                    "hours_since_update": 12,
+                },
+                {
+                    "project_id": "test_project",
+                    "dataset_id": "test_dataset1",
+                    "table_id": "test_table2",
+                    "threshold_hours": 24,
+                    "last_updated_column": "last_modified_time",
+                    "last_modified_time": current_time - timedelta(hours=36),
+                    "hours_since_update": 36,
+                },
+            ]
+        ),
     ]
     result = process_dataset(mock_bigquery_client, "test_project", "audit_dataset", "latency_params", "test_dataset1")
     assert len(result) == 2
@@ -72,43 +73,50 @@ def test_process_dataset(mock_bigquery_client):
     assert result[1]["table_id"] == "test_table2"
     assert result[1]["hours_since_update"] == 36
 
+
 def test_process_dataset_with_group_by(mock_bigquery_client):
     """
     Tests processing a dataset with group_by configuration.
     """
     current_time = datetime.now(timezone.utc)
     mock_bigquery_client.query.side_effect = [
-        Mock(result=lambda: [{
-            "dataset": "test_dataset3",
-            "tables": ["test_table3"],
-            "threshold_hours": 6,
-            "group_by_column": "brand",
-            "last_updated_column": "last_updated_at"
-        }]),
-        Mock(result=lambda: [
-            {
-                "project_id": "test_project",
-                "dataset_id": "test_dataset3",
-                "table_id": "test_table3",
-                "threshold_hours": 6,
-                "group_by_column": "brand",
-                "last_updated_column": "last_updated_at",
-                "last_modified_time": current_time - timedelta(hours=3),
-                "hours_since_update": 3,
-                "group_by_value": "BrandA",
-            },
-            {
-                "project_id": "test_project",
-                "dataset_id": "test_dataset3",
-                "table_id": "test_table3",
-                "threshold_hours": 6,
-                "group_by_column": "brand",
-                "last_updated_column": "last_updated_at",
-                "last_modified_time": current_time - timedelta(hours=12),
-                "hours_since_update": 12,
-                "group_by_value": "BrandB",
-            },
-        ]),
+        Mock(
+            result=lambda: [
+                {
+                    "dataset": "test_dataset3",
+                    "tables": ["test_table3"],
+                    "threshold_hours": 6,
+                    "group_by_column": "brand",
+                    "last_updated_column": "last_updated_at",
+                }
+            ]
+        ),
+        Mock(
+            result=lambda: [
+                {
+                    "project_id": "test_project",
+                    "dataset_id": "test_dataset3",
+                    "table_id": "test_table3",
+                    "threshold_hours": 6,
+                    "group_by_column": "brand",
+                    "last_updated_column": "last_updated_at",
+                    "last_modified_time": current_time - timedelta(hours=3),
+                    "hours_since_update": 3,
+                    "group_by_value": "BrandA",
+                },
+                {
+                    "project_id": "test_project",
+                    "dataset_id": "test_dataset3",
+                    "table_id": "test_table3",
+                    "threshold_hours": 6,
+                    "group_by_column": "brand",
+                    "last_updated_column": "last_updated_at",
+                    "last_modified_time": current_time - timedelta(hours=12),
+                    "hours_since_update": 12,
+                    "group_by_value": "BrandB",
+                },
+            ]
+        ),
     ]
 
     result = process_dataset(mock_bigquery_client, "test_project", "audit_dataset", "latency_params", "test_dataset3")
@@ -120,6 +128,7 @@ def test_process_dataset_with_group_by(mock_bigquery_client):
     assert result[1]["table_id"] == "test_table3"
     assert result[1]["group_by_value"] == "BrandB"
     assert result[1]["hours_since_update"] == 12
+
 
 @patch("utils.bigquery.ThreadPoolExecutor")
 @patch("utils.bigquery.as_completed")
@@ -137,7 +146,7 @@ def test_get_latency_data_success(
     mock_future = Mock()
     mock_future.result.return_value = [
         {"table_id": "table1", "hours_since_update": 1},
-        {"table_id": "table2", "hours_since_update": 2}
+        {"table_id": "table2", "hours_since_update": 2},
     ]
 
     mock_executor.return_value.__enter__.return_value.submit.side_effect = [mock_future, mock_future]
@@ -150,6 +159,7 @@ def test_get_latency_data_success(
     mock_bigquery_client.query.assert_called_once()
     assert mock_executor.call_args[1]["max_workers"] == MAX_WORKERS
     assert mock_as_completed.called
+
 
 def test_get_latency_data_target_dataset(mock_bigquery_client, mock_query_job):
     """
@@ -169,6 +179,7 @@ def test_get_latency_data_target_dataset(mock_bigquery_client, mock_query_job):
     assert len(errors) == 0
     assert result[0]["table_id"] == "table1"
     mock_bigquery_client.query.assert_called_once()
+
 
 def test_get_latency_data_exception_handling(mock_bigquery_client, mock_query_job):
     """
@@ -190,6 +201,7 @@ def test_get_latency_data_exception_handling(mock_bigquery_client, mock_query_jo
     assert len(errors) == 1  # One error should be recorded
     mock_cprint.assert_any_call("Dataset test_dataset2 generated an exception: Test exception", severity="ERROR")
 
+
 def test_get_latency_data_nonexistent_target_dataset(mock_bigquery_client):
     """
     Tests error handling when a specified target dataset doesn't exist.
@@ -197,6 +209,8 @@ def test_get_latency_data_nonexistent_target_dataset(mock_bigquery_client):
     mock_bigquery_client.query.return_value = Mock(result=lambda: [])
 
     with pytest.raises(ValueError) as excinfo:
-        get_latency_data(mock_bigquery_client, "test_project", "audit_dataset", "latency_params", "nonexistent_dataset")
+        get_latency_data(
+            mock_bigquery_client, "test_project", "audit_dataset", "latency_params", "nonexistent_dataset"
+        )
 
     assert "Specified dataset 'nonexistent_dataset' not found or not configured for monitoring" in str(excinfo.value)

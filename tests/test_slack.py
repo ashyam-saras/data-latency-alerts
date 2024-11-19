@@ -1,12 +1,12 @@
 import os
-from unittest.mock import Mock, patch, mock_open
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock, mock_open, patch
 
 import pandas as pd
 import pytest
 from slack_sdk.errors import SlackApiError
 
-from utils.slack import generate_slack_message, send_slack_message, write_to_excel, calculate_time_period
+from utils.slack import calculate_time_period, generate_slack_message, send_slack_message, write_to_excel
 
 
 @pytest.fixture
@@ -32,12 +32,12 @@ def test_calculate_time_period():
     assert calculate_time_period(five_hours_ago) == "5 hours"
 
     # Test with pandas Timestamp input
-    now_pd = pd.Timestamp.now(tz='UTC')
+    now_pd = pd.Timestamp.now(tz="UTC")
     five_hours_ago_pd = now_pd - pd.Timedelta(hours=5)
     assert calculate_time_period(five_hours_ago_pd) == "5 hours"
 
     # Test with a pandas Timestamp in a different timezone
-    five_hours_ago_est = pd.Timestamp.now(tz='US/Eastern') - pd.Timedelta(hours=5)
+    five_hours_ago_est = pd.Timestamp.now(tz="US/Eastern") - pd.Timedelta(hours=5)
     result = calculate_time_period(five_hours_ago_est)
     assert result == "5 hours", f"Expected '5 hours', but got '{result}'"
 
@@ -56,8 +56,8 @@ def test_calculate_time_period():
     assert result == "0 hours", f"Expected '0 hours', but got '{result}'"
 
     # Test with a pandas Timestamp from a specific date
-    specific_date = pd.Timestamp('2023-01-01 12:00:00', tz='UTC')
-    hours_diff = (pd.Timestamp.now(tz='UTC') - specific_date).total_seconds() / 3600
+    specific_date = pd.Timestamp("2023-01-01 12:00:00", tz="UTC")
+    hours_diff = (pd.Timestamp.now(tz="UTC") - specific_date).total_seconds() / 3600
     expected_result = calculate_time_period(hours_diff)
     result = calculate_time_period(specific_date)
     assert result == expected_result, f"Expected '{expected_result}', but got '{result}'"
@@ -72,9 +72,9 @@ def test_generate_slack_message(sample_latency_data):
     assert isinstance(message, dict)
     assert "blocks" in message
     blocks = message["blocks"]
-    
+
     message_text = "\n".join(block["text"]["text"] for block in blocks if "text" in block)
-    
+
     assert "*Data Latency Alert" in message_text
     assert "*Tables breaching SLA:* 2 tables" in message_text
     assert "*Max delay:* 10 hours" in message_text
@@ -200,13 +200,15 @@ def test_write_to_excel(tmp_path):
     Tests writing data to an Excel file.
     Ensures correct file creation and content, including the 'Read me' sheet.
     """
-    df = pd.DataFrame({
-        "col1": [1, 2],
-        "col2": [3, 4],
-        "date_col": [pd.Timestamp('2023-01-01', tz='UTC'), pd.Timestamp('2023-01-02', tz='UTC')]
-    })
+    df = pd.DataFrame(
+        {
+            "col1": [1, 2],
+            "col2": [3, 4],
+            "date_col": [pd.Timestamp("2023-01-01", tz="UTC"), pd.Timestamp("2023-01-02", tz="UTC")],
+        }
+    )
     excel_file = tmp_path / "test.xlsx"
-    date_columns = ['date_col']
+    date_columns = ["date_col"]
 
     result = write_to_excel(df, str(excel_file), date_columns)
 
@@ -218,7 +220,7 @@ def test_write_to_excel(tmp_path):
         results_df = pd.read_excel(xls, "Results")
         assert results_df.shape == df.shape
         assert all(results_df.columns == df.columns)
-        assert results_df['date_col'].dtype == 'datetime64[ns]'  # Ensure timezone info is removed
+        assert results_df["date_col"].dtype == "datetime64[ns]"  # Ensure timezone info is removed
 
         read_me_df = pd.read_excel(xls, "Read me")
         assert "Results Sheet" in read_me_df["Sheet"].values
@@ -241,34 +243,41 @@ def test_write_to_excel_with_non_utc_timezone(tmp_path):
     Tests writing data with non-UTC timezone to Excel.
     Ensures correct handling of different timezones.
     """
-    df = pd.DataFrame({
-        "date_col": [pd.Timestamp('2023-01-01', tz='US/Eastern'), pd.Timestamp('2023-01-02', tz='US/Pacific')]
-    })
+    df = pd.DataFrame(
+        {"date_col": [pd.Timestamp("2023-01-01", tz="US/Eastern"), pd.Timestamp("2023-01-02", tz="US/Pacific")]}
+    )
     excel_file = tmp_path / "test.xlsx"
-    date_columns = ['date_col']
+    date_columns = ["date_col"]
 
     result = write_to_excel(df, str(excel_file), date_columns)
 
     assert os.path.exists(result)
     with pd.ExcelFile(result) as xls:
         results_df = pd.read_excel(xls, "Results")
-        assert results_df['date_col'].dtype == 'datetime64[ns]'  # Ensure timezone info is removed
+        assert results_df["date_col"].dtype == "datetime64[ns]"  # Ensure timezone info is removed
         assert len(results_df) == 2
         # Check that the dates are correct (now in UTC)
-        assert results_df['date_col'][0] == pd.Timestamp('2023-01-01 05:00:00')  # UTC equivalent of 2023-01-01 00:00:00 US/Eastern
-        assert results_df['date_col'][1] == pd.Timestamp('2023-01-02 08:00:00')  # UTC equivalent of 2023-01-02 00:00:00 US/Pacific
+        assert results_df["date_col"][0] == pd.Timestamp(
+            "2023-01-01 05:00:00"
+        )  # UTC equivalent of 2023-01-01 00:00:00 US/Eastern
+        assert results_df["date_col"][1] == pd.Timestamp(
+            "2023-01-02 08:00:00"
+        )  # UTC equivalent of 2023-01-02 00:00:00 US/Pacific
+
 
 def test_write_to_excel_with_missing_date_column(tmp_path):
     """
     Tests writing data when a specified date column is missing from the DataFrame.
     Ensures the function handles this gracefully.
     """
-    df = pd.DataFrame({
-        "col1": [1, 2],
-        "col2": [3, 4],
-    })
+    df = pd.DataFrame(
+        {
+            "col1": [1, 2],
+            "col2": [3, 4],
+        }
+    )
     excel_file = tmp_path / "test.xlsx"
-    date_columns = ['non_existent_date_col']
+    date_columns = ["non_existent_date_col"]
 
     result = write_to_excel(df, str(excel_file), date_columns)
 
