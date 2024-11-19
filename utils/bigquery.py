@@ -12,7 +12,8 @@ load_dotenv()
 
 
 def get_query_content(filename):
-    with open(filename, "r") as file:
+    sql_dir = Path(__file__).parent.parent / "sql"
+    with open(sql_dir / filename, "r") as file:
         return file.read()
 
 
