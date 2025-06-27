@@ -192,10 +192,8 @@ pytest tests/test_slack.py
 data-latency-alerts/
 ├── dags/
 │   ├── data_latency_alerts_dag.py       # Main DAG with native operators
-│   ├── sql/
-│   │   └── latency_check_query.sql     # SQL query with Jinja templating
-│   └── utils/
-│       └── __init__.py                 # Python package marker
+│   └── sql/
+│       └── latency_check_query.sql     # SQL query with Jinja templating
 ├── config/
 │   ├── slack_alerts.json               # Slack configuration (optional)
 │   └── README.md                       # Config documentation
@@ -214,8 +212,6 @@ gs://your-dag-bucket/data-latency-alerts/
 ├── data_latency_alerts_dag.py           # Main DAG file
 ├── sql/
 │   └── latency_check_query.sql         # SQL query
-├── utils/
-│   └── __init__.py                     # Package marker
 └── config/
     └── slack_alerts.json               # Configuration (optional)
 ```
