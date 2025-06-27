@@ -1,0 +1,18 @@
+# Additional Python packages for Cloud Composer
+# These will be installed in the Airflow environment
+
+# HTTP requests (usually already available, but ensuring version)
+requests>=2.25.0
+
+# JSON handling and data manipulation (usually available)
+# pandas>=1.3.0  # Uncomment if you need pandas in Airflow tasks
+
+# Google Cloud libraries (usually available in Composer)
+# google-cloud-bigquery>=3.0.0  # Uncomment if you need direct BigQuery access
+# google-cloud-storage>=2.0.0   # Uncomment if you need GCS access
+
+# Slack SDK (if you want to send Slack messages directly from Airflow)
+# slack-sdk>=3.20.0  # Uncomment if you want direct Slack integration
+
+# Additional utilities
+# python-dotenv>=0.19.0  # Uncomment if you need .env file support 

@@ -19,6 +19,7 @@ This project provides an automated system to monitor and alert about BigQuery ra
   - [Production Deployment](#production-deployment)
   - [Environment Variables](#environment-variables-1)
   - [Secrets](#secrets)
+- [Orchestration with Cloud Composer](#orchestration-with-cloud-composer)
 - [Project Structure](#project-structure)
 - [Configuration Management](#configuration-management)
 - [Contributing](#contributing)
@@ -141,6 +142,38 @@ Set these secrets in your GitHub repository:
 - `GCP_SA_KEY`: JSON key of the Google Cloud service account
 - `SLACK_API_TOKEN`: Slack Bot User OAuth Token
 
+## Orchestration with Cloud Composer
+
+For production workloads, you can orchestrate the data latency alerts using Cloud Composer (Apache Airflow) instead of Cloud Scheduler.
+
+### Benefits of Using Composer
+- **Better Monitoring**: Rich UI for tracking DAG runs and task status
+- **Retry Logic**: Advanced retry and failure handling capabilities
+- **Workflow Management**: Complex dependencies and conditional execution
+- **Logging**: Centralized logging and debugging capabilities
+- **Manual Triggers**: Easy manual execution and dataset-specific runs
+
+### Quick Setup
+
+1. **Create Composer Environment**:
+   ```bash
+   cd composer
+   ./setup_composer.sh data-latency-composer us-central1
+   ```
+
+2. **Deploy DAGs**:
+   ```bash
+   ./deploy_dags.sh data-latency-composer us-central1
+   ```
+
+3. **Configure Variables**: Set up Airflow variables for your Cloud Function URL and Slack credentials
+
+### DAG Schedule
+- **Main DAG**: Runs twice daily at 6 AM and 6 PM IST
+- **Dataset-specific DAG**: Manual trigger for ad-hoc checks
+
+For detailed setup instructions, see [composer/README.md](composer/README.md).
+
 ## Project Structure
 
 ```
@@ -154,6 +187,13 @@ data-latency-alerts/
 │   └── utils.py                           # Helper functions
 ├── sql/                                   # SQL queries
 │   └── pattern_based_latency_check.sql   # Main monitoring query
+├── dags/                                  # Airflow DAGs
+│   └── data_latency_alerts_dag.py        # Cloud Composer orchestration
+├── composer/                              # Cloud Composer setup
+│   ├── README.md                          # Composer documentation
+│   ├── setup_composer.sh                 # Environment setup script
+│   ├── deploy_dags.sh                     # DAG deployment script
+│   └── requirements.txt                   # Composer Python dependencies
 ├── tests/                                 # Test files
 └── .github/workflows/                     # CI/CD workflows
 ```
