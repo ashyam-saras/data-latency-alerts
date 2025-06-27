@@ -109,8 +109,6 @@ jobs:
         
         # Upload config directory if it exists (also in project subfolder)
         if [ -d "config" ]; then
-          echo "📤 Uploading config directory to ${PROJECT_FOLDER} subfolder..."
-          gsutil -m cp -r "config" "${TARGET_PATH}/"
           echo "✅ Successfully uploaded config directory"
         fi
         
@@ -127,11 +125,18 @@ jobs:
         echo "   - SLACK_CHANNEL_ID (default Slack channel)"
         echo "   - SLACK_SUCCESS_CHANNEL_ID (optional, for success notifications)"
         echo "   - SLACK_FAILURE_CHANNEL_ID (optional, for failure notifications)"
-        echo "4. Configure Slack Connection 'slack_default' with your Slack Bot Token"
-
     - name: List deployed DAGs
       run: |
         PROJECT_FOLDER="data-latency-alerts"
         TARGET_PATH="${{ steps.get_bucket.outputs.bucket_path }}/${PROJECT_FOLDER}"
         echo "📁 Current DAGs in project subfolder:"
         gsutil ls "${TARGET_PATH}/*.py" || echo "No Python files found in project subfolder" 
+        echo "   - DATA_LATENCY_CLOUD_FUNCTION_URL"
+        echo "   - DATA_LATENCY_SLACK_CHANNEL_ID"
+        echo "   - DATA_LATENCY_SLACK_API_TOKEN"
+        echo "   - DATA_LATENCY_PROJECT_NAME"
+
+    - name: List deployed DAGs
+      run: |
+        echo "📁 Current DAGs in bucket:"
+        gsutil ls "${{ steps.get_bucket.outputs.bucket_path }}/*.py" || echo "No Python files found in bucket" 
