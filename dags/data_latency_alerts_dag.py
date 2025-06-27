@@ -33,8 +33,8 @@ DEFAULT_ARGS = {
     "start_date": days_ago(1),
     "email_on_failure": True,
     "email_on_retry": False,
-    "retries": 2,
-    "retry_delay": timedelta(minutes=5),
+    "retries": 0,
+    "retry_delay": timedelta(minutes=0),
     "catchup": False,
 }
 
