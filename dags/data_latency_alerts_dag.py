@@ -178,7 +178,6 @@ with DAG(
         channel="{{ ti.xcom_pull(task_ids='process_results')['channel'] }}",
         text="{{ ti.xcom_pull(task_ids='process_results')['message'] }}",
         username="Airflow Data Monitor",
-        icon_emoji=":chart_with_upwards_trend:",
     )
 
     # Task 4: Failure notification task (triggered on failures)
@@ -192,7 +191,6 @@ with DAG(
 ❌ Failed Task: {{ task_instance.task_id }}
 🔍 Check Airflow logs for details""",
         username="Airflow Data Monitor",
-        icon_emoji=":rotating_light:",
         trigger_rule="one_failed",  # Only runs if upstream tasks fail
     )
 
@@ -242,7 +240,6 @@ with DAG(
         text="""{{ ti.xcom_pull(task_ids='process_results')['message'] }}
 🎯 *Dataset-Specific Check*: `{{ dag_run.conf.get('dataset_name', 'Not specified') }}`""",
         username="Airflow Data Monitor",
-        icon_emoji=":dart:",
     )
 
     dataset_failure = SlackAPIPostOperator(
@@ -255,7 +252,6 @@ with DAG(
 ⏰ Execution Date: {{ ds }}
 ❌ Failed Task: {{ task_instance.task_id }}""",
         username="Airflow Data Monitor",
-        icon_emoji=":rotating_light:",
         trigger_rule="one_failed",
     )
 
