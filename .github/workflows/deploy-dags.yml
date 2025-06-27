@@ -87,7 +87,11 @@ jobs:
 
     - name: Deploy DAGs
       run: |
-        echo "🚀 Deploying DAGs to: ${{ steps.get_bucket.outputs.bucket_path }}"
+        # Define project subfolder
+        PROJECT_FOLDER="data-latency-alerts"
+        TARGET_PATH="${{ steps.get_bucket.outputs.bucket_path }}/${PROJECT_FOLDER}"
+        
+        echo "🚀 Deploying DAGs to project subfolder: ${TARGET_PATH}"
         
         # Count DAG files
         DAG_COUNT=$(find dags -name "*.py" -type f | wc -l)
@@ -98,48 +102,36 @@ jobs:
           exit 0
         fi
         
-        # Upload all Python files from dags directory
-        for dag_file in dags/*.py; do
-          if [ -f "$dag_file" ]; then
-            echo "📤 Uploading $(basename $dag_file)..."
-            gsutil cp "$dag_file" "${{ steps.get_bucket.outputs.bucket_path }}/"
-            
-            if [ $? -eq 0 ]; then
-              echo "✅ Successfully uploaded $(basename $dag_file)"
-            else
-              echo "❌ Failed to upload $(basename $dag_file)"
-              exit 1
-            fi
-          fi
-        done
+        # Create project subfolder and sync the entire dags directory
+        echo "📤 Synchronizing dags directory to ${PROJECT_FOLDER} subfolder..."
+        gsutil -m rsync -r -d "dags/" "${TARGET_PATH}/"
+        echo "✅ Successfully synchronized dags directory"
         
-        # Upload utils directory if it exists
-        if [ -d "dags/utils" ]; then
-          echo "📤 Uploading utils directory..."
-          gsutil -m cp -r "dags/utils" "${{ steps.get_bucket.outputs.bucket_path }}/"
-          echo "✅ Successfully uploaded utils directory"
-        fi
-        
-        # Upload config directory if it exists
+        # Upload config directory if it exists (also in project subfolder)
         if [ -d "config" ]; then
-          echo "📤 Uploading config directory..."
-          gsutil -m cp -r "config" "${{ steps.get_bucket.outputs.bucket_path }}/"
+          echo "📤 Uploading config directory to ${PROJECT_FOLDER} subfolder..."
+          gsutil -m cp -r "config" "${TARGET_PATH}/"
           echo "✅ Successfully uploaded config directory"
         fi
         
         echo ""
-        echo "🎉 All DAGs deployed successfully!"
+        echo "🎉 All DAGs deployed successfully to ${PROJECT_FOLDER} subfolder!"
         echo ""
         echo "📋 Next Steps:"
         echo "1. Check Airflow UI for new DAGs (may take 1-2 minutes to appear)"
         echo "2. Enable the DAGs if they are paused"
         echo "3. Set required Airflow Variables if not already configured:"
-        echo "   - DATA_LATENCY_CLOUD_FUNCTION_URL"
-        echo "   - DATA_LATENCY_SLACK_CHANNEL_ID"
-        echo "   - DATA_LATENCY_SLACK_API_TOKEN"
-        echo "   - DATA_LATENCY_PROJECT_NAME"
+        echo "   - PROJECT_NAME (default: insightsprod)"
+        echo "   - AUDIT_DATASET_NAME (default: edm_insights_metadata)"
+        echo "   - BIGQUERY_LOCATION (default: us-central1)"
+        echo "   - SLACK_CHANNEL_ID (default Slack channel)"
+        echo "   - SLACK_SUCCESS_CHANNEL_ID (optional, for success notifications)"
+        echo "   - SLACK_FAILURE_CHANNEL_ID (optional, for failure notifications)"
+        echo "4. Configure Slack Connection 'slack_default' with your Slack Bot Token"
 
     - name: List deployed DAGs
       run: |
-        echo "📁 Current DAGs in bucket:"
-        gsutil ls "${{ steps.get_bucket.outputs.bucket_path }}/*.py" || echo "No Python files found in bucket" 
+        PROJECT_FOLDER="data-latency-alerts"
+        TARGET_PATH="${{ steps.get_bucket.outputs.bucket_path }}/${PROJECT_FOLDER}"
+        echo "📁 Current DAGs in project subfolder:"
+        gsutil ls "${TARGET_PATH}/*.py" || echo "No Python files found in project subfolder" 

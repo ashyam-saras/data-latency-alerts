@@ -1,226 +1,292 @@
-[![Deploy Cloud Function](https://github.com/ashyam-saras/data-latency-alerts/actions/workflows/deploy-cloud-function.yml/badge.svg)](https://github.com/ashyam-saras/data-latency-alerts/actions/workflows/deploy-cloud-function.yml)
-[![Deploy Cloud Scheduler](https://github.com/ashyam-saras/data-latency-alerts/actions/workflows/deploy-cloud-scheduler.yml/badge.svg)](https://github.com/ashyam-saras/data-latency-alerts/actions/workflows/deploy-cloud-scheduler.yml)
+[![Deploy Airflow DAGs](https://github.com/ashyam-saras/data-latency-alerts/actions/workflows/deploy-dags.yml/badge.svg)](https://github.com/ashyam-saras/data-latency-alerts/actions/workflows/deploy-dags.yml)
 ![Coverage](reports/coverage/badge.svg)
 
 # Data Latency Alerts
 
-This project provides an automated system to monitor and alert about BigQuery raw tables that have not been updated within specified timeframes. It uses a pattern-based approach to monitor `*_prod_raw` datasets and helps data teams maintain data freshness and quickly identify potential issues in data pipelines.
+A comprehensive data latency monitoring system that executes BigQuery queries directly in Airflow to detect and alert on data freshness issues across multiple datasets.
 
-## Table of Contents
-- [Features](#features)
-- [Prerequisites](#prerequisites)
-- [How it works](#how-it-works)
-- [Setup and Configuration](#setup-and-configuration)
-  - [Environment Variables](#environment-variables)
-  - [BigQuery Setup](#bigquery-setup)
-  - [Slack Setup](#slack-setup)
-- [Deployment](#deployment)
-  - [Development Deployment](#development-deployment)
-  - [Production Deployment](#production-deployment)
-  - [Environment Variables](#environment-variables-1)
-  - [Secrets](#secrets)
-- [Orchestration with Cloud Composer](#orchestration-with-cloud-composer)
-- [Project Structure](#project-structure)
-- [Configuration Management](#configuration-management)
-- [Contributing](#contributing)
+## 🏗️ Architecture Overview
 
-## Features
+The system uses a **pattern-based monitoring approach** with native Airflow BigQuery operators:
 
-- **Pattern-based monitoring** of BigQuery raw tables (`*_prod_raw` datasets)
-- **Flexible configuration** using table patterns and latency thresholds
-- **Smart exclusions** via dataset labels and table ignore lists
-- **Automated alerts** via Slack with summary statistics and detailed Excel reports
-- **Cloud Function deployment** with scheduled execution via Cloud Scheduler
-- **Automated CI/CD pipeline** using GitHub Actions
-- **Comprehensive error handling** and logging
+1. **Native BigQuery Integration**: Uses [`BigQueryInsertJobOperator`](https://airflow.apache.org/docs/apache-airflow-providers-google/stable/operators/cloud/bigquery.html#execute-bigquery-jobs) for optimal Airflow integration
+2. **Pattern Matching**: Uses `raw_table_latency_thresholds` for flexible table pattern matching
+3. **Airflow Orchestration**: Scheduled DAGs with deferrable operators for resource efficiency
+4. **Slack Notifications**: Configurable alerts for success/failure/warnings
+5. **Dataset Filtering**: Supports both inclusion and exclusion patterns
 
-## Prerequisites
+## 📋 Features
 
-Before setting up this project, ensure you have the following:
+- **Native Airflow Integration**: Uses official `BigQueryInsertJobOperator` and [`SlackAPIPostOperator`](https://airflow.apache.org/docs/apache-airflow-providers-slack/stable/_api/airflow/providers/slack/operators/slack/index.html#airflow.providers.slack.operators.slack.SlackAPIPostOperator) with deferrable mode
+- **Pattern-Based Configuration**: Flexible table matching using SQL patterns
+- **Intelligent Filtering**: Excludes datasets and tables based on labels and lists
+- **Native Slack Notifications**: Rich Slack messages with emojis, templating, and conditional channels
+- **Flexible Scheduling**: Multiple DAGs for different monitoring needs
+- **Resource Efficient**: Deferrable operators for better resource management
+- **Zero Dependencies**: All required packages pre-installed in Cloud Composer
+- **Airflow Variables Support**: Configuration via Airflow Variables with smart defaults
 
-1. A Google Cloud Platform (GCP) project with billing enabled
-2. A service account with the following roles:
-   - Cloud Functions Developer
-   - Cloud Run Admin
-   - Cloud Scheduler Admin
-   - Service Account User
-   - BigQuery Job User
-3. Python 3.11 or later
-4. A Slack workspace with permissions to create apps and send messages
-
-## How it works
-
-The system uses a **pattern-based approach** to monitor raw data tables:
-
-### 1. Pattern Matching & Configuration
-- Reads table patterns and latency thresholds from `raw_table_latency_thresholds` table
-- Matches table names against patterns (e.g., `%amazonsbads_%portfolio` matches `amazonsbads_12345_portfolio`)
-- Each pattern has an associated latency threshold (e.g., 24 hours)
-
-### 2. Smart Filtering
-- **Dataset-level filtering**: Excludes datasets labeled with `latency_check_ignore=true`
-- **Table-level filtering**: Excludes specific tables listed in `ignore_latency_tables_list`
-- **Scope**: Only monitors `*_prod_raw` datasets
-
-### 3. Latency Detection
-- Uses `INFORMATION_SCHEMA.TABLE_STORAGE` to get accurate table modification times
-- Identifies tables where `STORAGE_LAST_MODIFIED_TIME` exceeds the pattern's threshold
-- Calculates hours since last update for each violating table
-
-### 4. Alert Generation
-- Generates summary statistics (total violations, max delay, average delay)
-- Creates Excel reports with detailed violation data
-- Sends structured Slack notifications with top 5 datasets by average delay
-
-### 5. Scheduling & Execution
-- Triggered via Cloud Scheduler (default: every 6 hours)
-- Supports manual execution and dataset-specific filtering
-- Comprehensive error handling and reporting
-
-## Setup and Configuration
-
-### Environment Variables
-
-The following environment variables are required:
-
-- `PROJECT_NAME`: GCP project name
-- `AUDIT_DATASET_NAME`: Name of the audit dataset containing configuration tables
-- `SLACK_CHANNEL_ID`: ID of the Slack channel for alerts
-- `SLACK_API_TOKEN`: Slack API token for sending messages
-
-### BigQuery Setup
-
-1. **Create audit dataset**: Create the `AUDIT_DATASET_NAME` dataset in your BigQuery project.
-
-2. **Set up configuration tables**:
-   - `raw_table_latency_thresholds`: Contains patterns and thresholds
-     ```sql
-     CREATE TABLE `{project}.{audit_dataset}.raw_table_latency_thresholds` (
-       source STRING,
-       table STRING,
-       table_pattern STRING,
-       latency_threshold INT64
-     );
-     ```
-   - `ignore_latency_tables_list`: Contains tables to exclude from monitoring
-     ```sql
-     CREATE TABLE `{project}.{audit_dataset}.ignore_latency_tables_list` (
-       table_schema STRING,
-       table_name STRING
-     );
-     ```
-
-3. **Configure dataset exclusions** (optional):
-   ```sql
-   ALTER SCHEMA `{project}.{dataset_name}` 
-   SET OPTIONS (labels = [('latency_check_ignore', 'true')]);
-   ```
-
-### Slack Setup
-
-1. Create a Slack app in your workspace
-2. Get the Bot User OAuth Token and set it as `SLACK_API_TOKEN`
-3. Invite the bot to your desired channel
-4. Get the channel ID and set it as `SLACK_CHANNEL_ID`
-
-## Deployment
-
-This project uses GitHub Actions for automated deployments:
-
-### Development Deployment
-- **Trigger**: Push to `dev` branch or manual dispatch
-- **Function name**: `data-latency-alerts-dev`
-- **Environment**: Development
-
-### Production Deployment
-- **Trigger**: Push to `main` branch or manual dispatch  
-- **Function name**: `data-latency-alerts`
-- **Environment**: Production
-
-### Secrets
-Set these secrets in your GitHub repository:
-- `GCP_SA_KEY`: JSON key of the Google Cloud service account
-- `SLACK_API_TOKEN`: Slack Bot User OAuth Token
-
-## Orchestration with Cloud Composer
-
-For production workloads, you can orchestrate the data latency alerts using Cloud Composer (Apache Airflow) instead of Cloud Scheduler.
-
-### Benefits of Using Composer
-- **Better Monitoring**: Rich UI for tracking DAG runs and task status
-- **Retry Logic**: Advanced retry and failure handling capabilities
-- **Workflow Management**: Complex dependencies and conditional execution
-- **Logging**: Centralized logging and debugging capabilities
-- **Manual Triggers**: Easy manual execution and dataset-specific runs
-
-### DAG Deployment
-
-The project includes Airflow DAGs that can be deployed to your existing Cloud Composer environment:
-
-1. **Automatic Deployment**: Push changes to `main` branch or files in `dags/` folder
-2. **Manual Deployment**: Use GitHub Actions workflow dispatch
-3. **Configure Repository Variables**:
-   - `COMPOSER_ENVIRONMENT_NAME`: Your Composer environment name
-   - `COMPOSER_LOCATION`: Environment location (default: us-central1)
-
-### DAG Schedule
-- **Main DAG**: `data_latency_alerts` - Runs twice daily at 6 AM and 6 PM IST
-- **Dataset-specific DAG**: `data_latency_alerts_dataset_specific` - Manual trigger for ad-hoc checks
+## 🔧 Configuration
 
 ### Required Airflow Variables
-Set these in your Composer environment:
-- `DATA_LATENCY_CLOUD_FUNCTION_URL`
-- `DATA_LATENCY_SLACK_CHANNEL_ID`
-- `DATA_LATENCY_SLACK_API_TOKEN`
-- `DATA_LATENCY_PROJECT_NAME`
 
-## Project Structure
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `PROJECT_NAME` | GCP project name | `insightsprod` | ✅ |
+| `AUDIT_DATASET_NAME` | Metadata dataset name | `edm_insights_metadata` | ✅ |
+| `BIGQUERY_LOCATION` | BigQuery region | `us-central1` | ❌ |
+| `SLACK_CHANNEL_ID` | Default Slack channel | `#data-alerts` | ❌ |
+| `SLACK_SUCCESS_CHANNEL_ID` | Success notifications channel | Falls back to `SLACK_CHANNEL_ID` | ❌ |
+| `SLACK_FAILURE_CHANNEL_ID` | Failure notifications channel | Falls back to `SLACK_CHANNEL_ID` | ❌ |
 
+### Required Airflow Connections
+
+| Connection ID | Type | Description |
+|---------------|------|-------------|
+| `slack_default` | Slack | Slack API token for notifications |
+
+#### Slack Connection Setup
+```bash
+# In Airflow UI: Admin → Connections → Create
+Connection Id: slack_default
+Connection Type: Slack
+Password: xoxb-your-slack-bot-token
+```
+
+### Configuration Hierarchy
+
+The system supports multiple configuration methods in order of precedence:
+
+1. **Airflow Variables** (highest priority)
+2. **JSON Configuration File** (`config/slack_alerts.json`)
+3. **Environment Variables** (fallback)
+
+### Example Airflow Variables Setup
+
+```bash
+# In Airflow UI or CLI
+airflow variables set PROJECT_NAME "insightsprod"
+airflow variables set AUDIT_DATASET_NAME "edm_insights_metadata"
+airflow variables set BIGQUERY_LOCATION "us-central1"
+airflow variables set SLACK_CHANNEL_ID "#data-alerts"
+airflow variables set SLACK_SUCCESS_CHANNEL_ID "#data-success"
+airflow variables set SLACK_FAILURE_CHANNEL_ID "#data-errors"
+```
+
+## 🚀 Deployment
+
+### Automatic Deployment
+
+The system automatically deploys to a dedicated `data-latency-alerts/` subfolder in your existing Cloud Composer environment:
+
+```bash
+# Push to main branch triggers deployment
+git push origin main
+```
+
+Files are deployed to: `gs://your-dag-bucket/data-latency-alerts/`
+
+### Manual Deployment
+
+Trigger deployment manually via GitHub Actions:
+
+1. Go to **Actions** → **Deploy Airflow DAGs**
+2. Click **Run workflow**
+3. Optionally specify:
+   - Custom DAG bucket path
+   - Environment name
+   - Location
+
+## 📊 DAGs Overview
+
+### 1. `data_latency_alerts` (Main DAG)
+
+- **Schedule**: Twice daily at 6 AM and 6 PM IST
+- **Purpose**: Monitors all `*_prod_raw` datasets for latency violations
+- **Tasks**:
+  - `run_latency_check`: Execute BigQuery pattern-based query
+  - `process_results`: Process and log results
+  - `handle_failures`: Handle any failures
+
+### 2. `data_latency_alerts_dataset_specific` (Ad-hoc DAG)
+
+- **Schedule**: Manual trigger only
+- **Purpose**: Monitor specific datasets on-demand
+- **Usage**: 
+  ```bash
+  airflow dags trigger data_latency_alerts_dataset_specific \
+    --conf '{"dataset_name": "your_dataset_prod_raw"}'
+  ```
+
+## 🔍 Monitoring Logic
+
+### Pattern-Based Query
+
+The system uses a sophisticated SQL query that:
+
+1. **Matches Tables**: Uses `raw_table_latency_thresholds` for pattern matching
+2. **Checks Freshness**: Compares `STORAGE_LAST_MODIFIED_TIME` with thresholds
+3. **Applies Filters**: Excludes datasets/tables based on:
+   - Dataset labels (`latency_check_ignore=true`)
+   - Table exclusion list (`ignore_latency_tables_list`)
+4. **Focuses on Production**: Only monitors `*_prod_raw` datasets
+
+### Key Components
+
+- **Patterns Table**: `{project}.{audit_dataset}.raw_table_latency_thresholds`
+- **Exclusion List**: `{project}.{audit_dataset}.ignore_latency_tables_list`
+- **Data Source**: `INFORMATION_SCHEMA.TABLE_STORAGE` for accurate timestamps
+
+## 📱 Slack Notifications
+
+### Success Notifications
+
+- ✅ **No Violations**: Clean bill of health
+- ⚠️ **Violations Found**: Summary with top affected datasets
+
+### Failure Notifications
+
+- 🚨 **DAG Failures**: Task failures with error details
+- 📋 **Error Context**: Detailed debugging information
+
+### Message Format
+
+```
+✅ Data Latency Check Completed Successfully
+📊 DAG: data_latency_alerts
+⏰ Execution Date: 2024-01-15
+🕐 Duration: 2m 15s
+📈 Status: ✅ No violations
+```
+
+## 🔧 Development
+
+### Local Development
+
+1. **Clone Repository**:
+   ```bash
+   git clone https://github.com/your-org/data-latency-alerts.git
+   cd data-latency-alerts
+   ```
+
+2. **Install Dependencies** (for local testing):
+   ```bash
+   # Install Airflow and providers for local development
+   pip install apache-airflow apache-airflow-providers-google slack-sdk pandas
+   ```
+
+3. **Set Environment Variables** (for local testing):
+   ```bash
+   export PROJECT_NAME="your-project"
+   export AUDIT_DATASET_NAME="your-metadata-dataset"
+   export SLACK_CHANNEL_ID="your-channel"
+   # Note: Slack token configured via Airflow Connection in production
+   ```
+
+### Testing
+
+```bash
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=. --cov-report=html
+
+# Test specific components
+pytest tests/test_bigquery.py
+pytest tests/test_slack.py
+```
+
+## 📁 Project Structure
+
+### Repository Structure
 ```
 data-latency-alerts/
-├── main.py                                 # Cloud Function entry point
-├── requirements.txt                        # Python dependencies
-├── utils/                                  # Utility modules
-│   ├── bigquery.py                        # BigQuery operations
-│   ├── slack.py                           # Slack notifications
-│   ├── log.py                             # Logging utilities
-│   └── utils.py                           # Helper functions
-├── sql/                                   # SQL queries
-│   └── pattern_based_latency_check.sql   # Main monitoring query
-├── dags/                                  # Airflow DAGs
-│   └── data_latency_alerts_dag.py        # Cloud Composer orchestration
-├── tests/                                 # Test files
-└── .github/workflows/                     # CI/CD workflows
-    ├── deploy-cloud-function.yml         # Cloud Function deployment
-    ├── deploy-cloud-scheduler.yml        # Cloud Scheduler deployment
-    └── deploy-dags.yml                   # Airflow DAG deployment
+├── dags/
+│   ├── data_latency_alerts_dag.py       # Main DAG with native operators
+│   ├── sql/
+│   │   └── latency_check_query.sql     # SQL query with Jinja templating
+│   └── utils/
+│       └── __init__.py                 # Python package marker
+├── config/
+│   ├── slack_alerts.json               # Slack configuration (optional)
+│   └── README.md                       # Config documentation
+├── .github/
+│   └── workflows/
+│       └── deploy-dags.yml             # Deployment workflow
+├── tests/                              # Test suite
+├── insightsprod-8b1340c52f9d.json     # Service account key
+├── pytest.ini                         # Test configuration
+└── README.md                          # This file
 ```
 
-## Configuration Management
-
-### Adding New Patterns
-```sql
-INSERT INTO `{project}.{audit_dataset}.raw_table_latency_thresholds` 
-VALUES ('SourceName', 'InternalTableName', '%pattern%', 24);
+### Deployed Structure (in Composer DAG bucket)
+```
+gs://your-dag-bucket/data-latency-alerts/
+├── data_latency_alerts_dag.py           # Main DAG file
+├── sql/
+│   └── latency_check_query.sql         # SQL query
+├── utils/
+│   └── __init__.py                     # Package marker
+└── config/
+    └── slack_alerts.json               # Configuration (optional)
 ```
 
-### Excluding Tables
-```sql
-INSERT INTO `{project}.{audit_dataset}.ignore_latency_tables_list` 
-VALUES ('dataset_name', 'table_name');
-```
+## 🚨 Troubleshooting
 
-### Disabling Pattern Monitoring
-```sql
-UPDATE `{project}.{audit_dataset}.raw_table_latency_thresholds` 
-SET latency_threshold = NULL 
-WHERE table_pattern LIKE '%pattern%';
-```
+### Common Issues
 
-## Contributing
+1. **BigQuery Access**: Ensure Composer service account has BigQuery permissions
+2. **Slack Permissions**: Verify bot token has `chat:write` and `channels:read` scopes
+3. **Airflow Variables**: Check all required variables are set correctly
+4. **SQL File Access**: Ensure `sql/latency_check_query.sql` is deployed to the DAGs bucket
+5. **Provider Package**: Verify `apache-airflow-providers-google` is available in Composer (default in v2.x)
+
+### Debugging
+
+1. **Check Logs**: View Airflow task logs for detailed error messages
+2. **Test Variables**: Verify Airflow Variables are accessible
+3. **Validate Patterns**: Ensure `raw_table_latency_thresholds` table exists
+4. **Check Permissions**: Verify service account permissions
+
+## 🔄 Migration from Cloud Function
+
+If migrating from the previous Cloud Function approach:
+
+1. **Architecture Change**: Cloud Function → Native Airflow BigQuery operators
+2. **Project Structure**: All code consolidated into `dags/` folder
+3. **Remove Variables**: Delete `DATA_LATENCY_CLOUD_FUNCTION_URL`
+4. **Update Variables**: Rename variables to new format (see configuration section)
+5. **Deploy**: Push changes to trigger deployment
+6. **Verify**: Check DAGs appear in Airflow UI
+7. **Clean up**: Remove Cloud Function and Cloud Scheduler resources (no longer needed)
+
+### What Changed
+- ✅ **Simplified**: Single repository, all in `dags/` folder
+- ✅ **Native Integration**: Uses `BigQueryInsertJobOperator` with deferrable mode
+- ✅ **Better Resource Management**: No external HTTP calls or timeouts
+- ✅ **SQL in Files**: Query logic separated from Python code
+- ✅ **Legacy Support**: Old utility files preserved for reference
+
+## 📈 Performance
+
+- **Execution Time**: Typically 1-3 minutes for full scan
+- **Resource Usage**: Minimal - single BigQuery query
+- **Scalability**: Handles thousands of tables efficiently
+- **Cost**: Optimized BigQuery queries for minimal cost
+
+## 🤝 Contributing
 
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/new-feature`)
-3. Make your changes and commit (`git commit -am 'Add new feature'`)
-4. Push to the branch (`git push origin feature/new-feature`)
-5. Create a Pull Request
+2. Create a feature branch
+3. Make your changes
+4. Add tests for new functionality
+5. Submit a pull request
+
+## 📄 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+---
+
+**Need Help?** Check the [troubleshooting section](#🚨-troubleshooting) or create an issue in the repository.
