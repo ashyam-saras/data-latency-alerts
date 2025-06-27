@@ -113,6 +113,20 @@ jobs:
           fi
         done
         
+        # Upload utils directory if it exists
+        if [ -d "dags/utils" ]; then
+          echo "📤 Uploading utils directory..."
+          gsutil -m cp -r "dags/utils" "${{ steps.get_bucket.outputs.bucket_path }}/"
+          echo "✅ Successfully uploaded utils directory"
+        fi
+        
+        # Upload config directory if it exists
+        if [ -d "config" ]; then
+          echo "📤 Uploading config directory..."
+          gsutil -m cp -r "config" "${{ steps.get_bucket.outputs.bucket_path }}/"
+          echo "✅ Successfully uploaded config directory"
+        fi
+        
         echo ""
         echo "🎉 All DAGs deployed successfully!"
         echo ""

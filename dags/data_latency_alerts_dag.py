@@ -21,6 +21,18 @@ from airflow.exceptions import AirflowException
 from airflow.models import Variable
 from airflow.utils.dates import days_ago
 
+# Import Slack alerts
+try:
+    from utils.slack_alerts import on_failure_callback, on_success_callback
+except ImportError:
+    # Fallback if utils module is not available
+    def on_success_callback(context):
+        logging.info("Success callback - Slack alerts not available")
+
+    def on_failure_callback(context):
+        logging.error("Failure callback - Slack alerts not available")
+
+
 # DAG Configuration
 DAG_ID = "data_latency_alerts"
 SCHEDULE_INTERVAL = "0 6,18 * * *"  # 6 AM and 6 PM daily
@@ -33,6 +45,8 @@ DEFAULT_ARGS = {
     "retries": 2,
     "retry_delay": timedelta(minutes=5),
     "catchup": False,
+    "on_success_callback": on_success_callback,
+    "on_failure_callback": on_failure_callback,
 }
 
 # Configuration from Airflow Variables

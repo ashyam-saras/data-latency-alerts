@@ -1,0 +1,38 @@
+{
+    "slack_alerts": {
+        "enabled": true,
+        "default_token": "${SLACK_API_TOKEN}",
+        "channels": {
+            "success": {
+                "channel_id": "${SLACK_CHANNEL_ID}",
+                "token": "${SLACK_API_TOKEN}",
+                "enabled": true,
+                "message_template": "✅ *Data Latency Check Completed Successfully*\n📊 DAG: `{dag_id}`\n⏰ Execution Date: {execution_date}\n🕐 Duration: {duration}\n📈 Status: {status}"
+            },
+            "failure": {
+                "channel_id": "${SLACK_ERROR_CHANNEL_ID:-${SLACK_CHANNEL_ID}}",
+                "token": "${SLACK_API_TOKEN}",
+                "enabled": true,
+                "message_template": "🚨 *Data Latency Check Failed*\n📊 DAG: `{dag_id}`\n⏰ Execution Date: {execution_date}\n❌ Failed Task: {failed_task}\n🔍 Error: {error_message}\n🔗 View Logs: {log_url}"
+            },
+            "warning": {
+                "channel_id": "${SLACK_WARNING_CHANNEL_ID:-${SLACK_CHANNEL_ID}}",
+                "token": "${SLACK_API_TOKEN}",
+                "enabled": false,
+                "message_template": "⚠️ *Data Latency Check Warning*\n📊 DAG: `{dag_id}`\n⏰ Execution Date: {execution_date}\n⚠️ Warning: {warning_message}"
+            }
+        },
+        "notification_settings": {
+            "notify_on_success": true,
+            "notify_on_failure": true,
+            "notify_on_retry": false,
+            "notify_on_warning": false,
+            "include_logs": true,
+            "include_duration": true,
+            "mention_users": {
+                "on_failure": ["@data-engineering"],
+                "on_success": []
+            }
+        }
+    }
+}
