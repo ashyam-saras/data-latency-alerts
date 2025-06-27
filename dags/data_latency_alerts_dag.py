@@ -122,7 +122,7 @@ with DAG(
         params={
             "project_name": PROJECT_NAME,
             "audit_dataset_name": AUDIT_DATASET_NAME,
-            "target_dataset": None,  # No specific dataset filter for main DAG
+            "target_dataset": None,  # No specific dataset filter
         },
         location=LOCATION,
         project_id=PROJECT_NAME,
@@ -172,74 +172,3 @@ with DAG(
 
     # Failure notification dependencies
     [latency_check_task, csv_task] >> notify_failure
-
-
-# Create a separate DAG for ad-hoc dataset-specific checks
-with DAG(
-    dag_id=f"{DAG_ID}_dataset_specific",
-    default_args=DEFAULT_ARGS,
-    description="Ad-hoc BigQuery data latency monitoring for specific datasets with CSV export",
-    schedule_interval=None,  # Manual trigger only
-    tags=["data-quality", "monitoring", "alerts", "bigquery", "slack", "ad-hoc"],
-    max_active_runs=3,
-) as dataset_dag:
-
-    # This DAG can be triggered manually with dataset parameter
-    # Usage: airflow dags trigger data_latency_alerts_dataset_specific --conf '{"dataset_name": "your_dataset_prod_raw"}'
-    dataset_check = BigQueryInsertJobOperator(
-        task_id="run_dataset_specific_check",
-        configuration={
-            "query": {
-                "query": "{% include '" + SQL_PATH + "' %}",
-                "useLegacySql": False,
-            }
-        },
-        params={
-            "project_name": PROJECT_NAME,
-            "audit_dataset_name": AUDIT_DATASET_NAME,
-            "target_dataset": "{{ dag_run.conf.get('dataset_name', '') }}",
-        },
-        location=LOCATION,
-        project_id=PROJECT_NAME,
-        deferrable=True,
-    )
-
-    dataset_csv = convert_results_to_csv()
-
-    dataset_send_csv = SlackAPIFileOperator(
-        task_id="send_dataset_csv_to_slack",
-        slack_conn_id=SLACK_CONN_ID,
-        channels=SLACK_CHANNEL_ID,
-        initial_comment="🎯 **Dataset-Specific Latency Check Results** 📊\n"
-        "Dataset: `{{ dag_run.conf.get('dataset_name', 'Not specified') }}`\n"
-        "Here are the latency monitoring results for the specific dataset.",
-        filename="dataset_latency_check_{{ dag_run.conf.get('dataset_name', 'unknown') }}_{{ ds }}.csv",
-        filetype="csv",
-        content="{{ ti.xcom_pull(task_ids='convert_results_to_csv') }}",
-        title="Dataset Latency Check Report - {{ ds }}",
-    )
-
-    dataset_failure = SlackAPIFileOperator(
-        task_id="notify_dataset_failure",
-        slack_conn_id=SLACK_CONN_ID,
-        channels=SLACK_CHANNEL_ID,
-        initial_comment="🚨 **Dataset-Specific Latency Check Failed** 🚨\n"
-        f"📊 DAG: `{DAG_ID}_dataset_specific`\n"
-        "🎯 Dataset: `{{ dag_run.conf.get('dataset_name', 'Not specified') }}`\n"
-        "⏰ Execution Date: {{ ds }}\n"
-        "❌ Check Airflow logs for details",
-        filename="dataset_dag_failure_log_{{ ds }}.txt",
-        filetype="txt",
-        content="Dataset DAG Failure Details:\n"
-        "DAG ID: {{ dag.dag_id }}\n"
-        "Dataset: {{ dag_run.conf.get('dataset_name', 'Not specified') }}\n"
-        "Task ID: {{ task_instance.task_id }}\n"
-        "Execution Date: {{ ds }}\n"
-        "Run ID: {{ run_id }}\n"
-        "\nPlease check Airflow UI for detailed logs and error messages.",
-        title="Dataset DAG Failure Report - {{ ds }}",
-        trigger_rule="one_failed",
-    )
-
-    dataset_check >> dataset_csv >> dataset_send_csv
-    [dataset_check, dataset_csv] >> dataset_failure

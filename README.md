@@ -99,24 +99,15 @@ Trigger deployment manually via GitHub Actions:
 
 ## 📊 DAGs Overview
 
-### 1. `data_latency_alerts` (Main DAG)
+### `data_latency_alerts` (Main DAG)
 
 - **Schedule**: Twice daily at 6 AM and 6 PM IST
 - **Purpose**: Monitors all `*_prod_raw` datasets for latency violations
 - **Tasks**:
   - `run_latency_check`: Execute BigQuery pattern-based query
-  - `process_results`: Process and log results
-  - `handle_failures`: Handle any failures
-
-### 2. `data_latency_alerts_dataset_specific` (Ad-hoc DAG)
-
-- **Schedule**: Manual trigger only
-- **Purpose**: Monitor specific datasets on-demand
-- **Usage**: 
-  ```bash
-  airflow dags trigger data_latency_alerts_dataset_specific \
-    --conf '{"dataset_name": "your_dataset_prod_raw"}'
-  ```
+  - `convert_results_to_csv`: Convert results to CSV format
+  - `send_csv_to_slack`: Upload CSV file to Slack channel
+  - `notify_failure`: Send failure notification file if DAG fails
 
 ## 🔍 Monitoring Logic
 
@@ -139,25 +130,22 @@ The system uses a sophisticated SQL query that:
 
 ## 📱 Slack Notifications
 
-### Success Notifications
+### CSV File Upload
 
-- ✅ **No Violations**: Clean bill of health
-- ⚠️ **Violations Found**: Summary with top affected datasets
+- 📊 **Results File**: CSV file with all latency check results
+- 🔍 **Simple Message**: "Here are the latest latency monitoring results"
+- 📁 **Filename**: `data_latency_check_2024-01-15.csv`
+
+### File Contents
+
+- ✅ **No Violations**: CSV with message "No latency violations found - all tables are up to date! ✅"
+- ⚠️ **Violations Found**: CSV with all violation details (table names, hours delay, etc.)
 
 ### Failure Notifications
 
-- 🚨 **DAG Failures**: Task failures with error details
-- 📋 **Error Context**: Detailed debugging information
-
-### Message Format
-
-```
-✅ Data Latency Check Completed Successfully
-📊 DAG: data_latency_alerts
-⏰ Execution Date: 2024-01-15
-🕐 Duration: 2m 15s
-📈 Status: ✅ No violations
-```
+- 🚨 **DAG Failures**: Text file with error details
+- 📋 **Filename**: `dag_failure_log_2024-01-15.txt`
+- 🔍 **Contents**: DAG ID, Task ID, Execution Date, Run ID, error instructions
 
 ## 🔧 Development
 
@@ -258,15 +246,15 @@ If migrating from the previous Cloud Function approach:
 3. **Remove Variables**: Delete `DATA_LATENCY_CLOUD_FUNCTION_URL`
 4. **Update Variables**: Rename variables to new format (see configuration section)
 5. **Deploy**: Push changes to trigger deployment
-6. **Verify**: Check DAGs appear in Airflow UI
+6. **Verify**: Check DAG appears in Airflow UI
 7. **Clean up**: Remove Cloud Function and Cloud Scheduler resources (no longer needed)
 
 ### What Changed
-- ✅ **Simplified**: Single repository, all in `dags/` folder
+- ✅ **Simplified**: Single DAG, single repository, all in `dags/` folder
 - ✅ **Native Integration**: Uses `BigQueryInsertJobOperator` with deferrable mode
-- ✅ **Better Resource Management**: No external HTTP calls or timeouts
+- ✅ **File-Based Notifications**: CSV files instead of complex message processing
 - ✅ **SQL in Files**: Query logic separated from Python code
-- ✅ **Legacy Support**: Old utility files preserved for reference
+- ✅ **Cleaner Approach**: No statistics processing, just raw results
 
 ## 📈 Performance
 
