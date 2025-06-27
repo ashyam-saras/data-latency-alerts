@@ -17,7 +17,6 @@ load_dotenv(override=True)
 # Environment variables
 PROJECT_NAME = os.environ["PROJECT_NAME"]
 AUDIT_DATASET_NAME = os.environ["AUDIT_DATASET_NAME"]
-LATENCY_PARAMS_TABLE = os.environ["LATENCY_PARAMS_TABLE"]
 SLACK_CHANNEL_ID = os.environ["SLACK_CHANNEL_ID"]
 TOKEN = os.environ["SLACK_API_TOKEN"]
 
@@ -45,7 +44,6 @@ def latency_alert(request: Request):
             bigquery_client,
             PROJECT_NAME,
             AUDIT_DATASET_NAME,
-            LATENCY_PARAMS_TABLE,
             target_dataset,
         )
 

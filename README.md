@@ -4,7 +4,7 @@
 
 # Data Latency Alerts
 
-This project provides an automated system to monitor and alert about BigQuery tables that have not been updated within a specified timeframe. It helps data teams maintain data freshness and quickly identify potential issues in data pipelines.
+This project provides an automated system to monitor and alert about BigQuery raw tables that have not been updated within specified timeframes. It uses a pattern-based approach to monitor `*_prod_raw` datasets and helps data teams maintain data freshness and quickly identify potential issues in data pipelines.
 
 ## Table of Contents
 - [Features](#features)
@@ -19,23 +19,20 @@ This project provides an automated system to monitor and alert about BigQuery ta
   - [Production Deployment](#production-deployment)
   - [Environment Variables](#environment-variables-1)
   - [Secrets](#secrets)
-  - [Customizing Deployments](#customizing-deployments)
+- [Orchestration with Cloud Composer](#orchestration-with-cloud-composer)
 - [Project Structure](#project-structure)
-- [Setting Up for Other GCP Projects](#setting-up-for-other-gcp-projects)
-- [Maintenance](#maintenance)
+- [Configuration Management](#configuration-management)
 - [Contributing](#contributing)
 
 ## Features
 
-- Automated monitoring of BigQuery tables across multiple datasets
-- Highly configurable monitoring parameters:
-  - Dataset-level and table-specific configurations
-  - Custom update thresholds for individual tables or datasets
-  - Support for monitoring specific data segments (e.g., brands) within tables
-- Parallel processing for efficient handling of large-scale data
-- Slack notifications with summary statistics and detailed Excel reports
-- Cloud Function deployment with scheduled execution via Cloud Scheduler
-- Automated CI/CD pipeline using GitHub Actions
+- **Pattern-based monitoring** of BigQuery raw tables (`*_prod_raw` datasets)
+- **Flexible configuration** using table patterns and latency thresholds
+- **Smart exclusions** via dataset labels and table ignore lists
+- **Automated alerts** via Slack with summary statistics and detailed Excel reports
+- **Cloud Function deployment** with scheduled execution via Cloud Scheduler
+- **Automated CI/CD pipeline** using GitHub Actions
+- **Comprehensive error handling** and logging
 
 ## Prerequisites
 
@@ -53,151 +50,177 @@ Before setting up this project, ensure you have the following:
 
 ## How it works
 
-1. Configuration:
-   - The system uses a configuration table in BigQuery (`LATENCY_PARAMS_TABLE`) to get monitoring parameters.
-   - This table specifies which datasets and tables to monitor, their update thresholds, and any specific data segments to track.
+The system uses a **pattern-based approach** to monitor raw data tables:
 
-2. Data Retrieval:
-   - The Cloud Function queries BigQuery to get a list of tables based on the configuration.
-   - It then checks the last update time of each table using the `__TABLES__` metadata.
+### 1. Pattern Matching & Configuration
+- Reads table patterns and latency thresholds from `raw_table_latency_thresholds` table
+- Matches table names against patterns (e.g., `%amazonsbads_%portfolio` matches `amazonsbads_12345_portfolio`)
+- Each pattern has an associated latency threshold (e.g., 24 hours)
 
-3. Latency Check:
-   - For each table or data segment, the system calculates the time since the last update.
-   - If this time exceeds the specified threshold (which can be dataset-specific, table-specific, or segment-specific), the table or segment is flagged as outdated.
+### 2. Smart Filtering
+- **Dataset-level filtering**: Excludes datasets labeled with `latency_check_ignore=true`
+- **Table-level filtering**: Excludes specific tables listed in `ignore_latency_tables_list`
+- **Scope**: Only monitors `*_prod_raw` datasets
 
-4. Parallel Processing:
-   - To handle large numbers of datasets efficiently, the system processes multiple datasets in parallel.
-   - The number of parallel workers is configurable via the `BQ_PARALLEL_DATASETS` environment variable.
+### 3. Latency Detection
+- Uses `INFORMATION_SCHEMA.TABLE_STORAGE` to get accurate table modification times
+- Identifies tables where `STORAGE_LAST_MODIFIED_TIME` exceeds the pattern's threshold
+- Calculates hours since last update for each violating table
 
-5. Alert Generation:
-   - If any tables are found to be outdated, an alert is generated.
-   - The alert includes summary statistics like the total number of outdated tables, maximum delay, and average delay.
-   - It also lists the top 5 datasets with the highest average delay.
+### 4. Alert Generation
+- Generates summary statistics (total violations, max delay, average delay)
+- Creates Excel reports with detailed violation data
+- Sends structured Slack notifications with top 5 datasets by average delay
 
-6. Slack Notification:
-   - The alert is formatted as a Slack message with structured blocks for easy readability.
-   - A detailed Excel report of all outdated tables is generated and attached to the Slack message.
-
-7. Scheduling:
-   - The Cloud Function is triggered periodically by Cloud Scheduler.
-   - The default schedule is every 6 hours, but this is configurable.
-
-8. Error Handling and Logging:
-   - The system includes comprehensive error handling and logging throughout the process.
-   - Errors are caught, logged, and reported to ensure visibility of any issues.
+### 5. Scheduling & Execution
+- Triggered via Cloud Scheduler (default: every 6 hours)
+- Supports manual execution and dataset-specific filtering
+- Comprehensive error handling and reporting
 
 ## Setup and Configuration
 
 ### Environment Variables
 
-Both workflows use GitHub Environments to manage environment-specific variables and secrets. The following variables are used:
+The following environment variables are required:
 
-- `PROJECT_NAME`: GCP project name (same for both environments)
-- `AUDIT_DATASET_NAME`: Name of the audit dataset (same for both environments)
-- `LATENCY_PARAMS_TABLE`: Name of the latency parameters table (different for dev and prod)
-- `SLACK_CHANNEL_ID`: ID of the Slack channel for alerts (different for dev and prod)
-- `SLACK_API_TOKEN`: Slack API token for sending messages (same for both environments)
-
-These variables can be set in the GitHub repository settings under Environments > [Environment Name] > Environment variables.
+- `PROJECT_NAME`: GCP project name
+- `AUDIT_DATASET_NAME`: Name of the audit dataset containing configuration tables
+- `SLACK_CHANNEL_ID`: ID of the Slack channel for alerts
+- `SLACK_API_TOKEN`: Slack API token for sending messages
 
 ### BigQuery Setup
 
-1. Create an audit dataset (`AUDIT_DATASET_NAME`) in your BigQuery project.
-2. In this dataset, create a table (`LATENCY_PARAMS_TABLE`) with the following schema:
-   - `dataset` (STRING): Name of the dataset to monitor
-   - `tables` (ARRAY<STRING>): Array of table names to monitor
-   - `threshold_hours` (INTEGER): Number of hours after which a table is considered outdated
-   - `group_by_column` (STRING): Column name to group by (e.g., 'brand')
-   - `last_updated_column` (STRING): Column name for the last update timestamp
-   - `created_at` (TIMESTAMP): Timestamp when the configuration was created
-   - `updated_at` (TIMESTAMP): Timestamp when the configuration was last updated
+1. **Create audit dataset**: Create the `AUDIT_DATASET_NAME` dataset in your BigQuery project.
+
+2. **Set up configuration tables**:
+   - `raw_table_latency_thresholds`: Contains patterns and thresholds
+     ```sql
+     CREATE TABLE `{project}.{audit_dataset}.raw_table_latency_thresholds` (
+       source STRING,
+       table STRING,
+       table_pattern STRING,
+       latency_threshold INT64
+     );
+     ```
+   - `ignore_latency_tables_list`: Contains tables to exclude from monitoring
+     ```sql
+     CREATE TABLE `{project}.{audit_dataset}.ignore_latency_tables_list` (
+       table_schema STRING,
+       table_name STRING
+     );
+     ```
+
+3. **Configure dataset exclusions** (optional):
+   ```sql
+   ALTER SCHEMA `{project}.{dataset_name}` 
+   SET OPTIONS (labels = [('latency_check_ignore', 'true')]);
+   ```
 
 ### Slack Setup
 
-1. Create a Slack app in your workspace.
-2. Get the Bot User OAuth Token and set it as `SLACK_API_TOKEN`.
-3. Invite the bot to the channel you want to receive alerts in.
-4. Get the channel ID and set it as `SLACK_CHANNEL_ID`.
+1. Create a Slack app in your workspace
+2. Get the Bot User OAuth Token and set it as `SLACK_API_TOKEN`
+3. Invite the bot to your desired channel
+4. Get the channel ID and set it as `SLACK_CHANNEL_ID`
 
 ## Deployment
 
-This project uses GitHub Actions for automated deployments to both development and production environments. The deployment process is defined in two separate workflow files:
-
-1. `deploy-cloud-function-dev.yml`: For deploying to the development environment
-2. `deploy-cloud-function.yml`: For deploying to the production environment
+This project uses GitHub Actions for automated deployments:
 
 ### Development Deployment
-
-The development deployment is triggered by:
-- Pushing to the `dev` branch
-- Manual workflow dispatch
+- **Trigger**: Push to `dev` branch or manual dispatch
+- **Function name**: `data-latency-alerts-dev`
+- **Environment**: Development
 
 ### Production Deployment
-
-The production deployment is triggered by:
-- Pushing to the `main` branch
-- Manual workflow dispatch
-
-### Environment Variables
-
-Both workflows use GitHub Environments to manage environment-specific variables and secrets. The following variables are used:
-
-- `PROJECT_NAME`: GCP project name (same for both environments)
-- `AUDIT_DATASET_NAME`: Name of the audit dataset (same for both environments)
-- `LATENCY_PARAMS_TABLE`: Name of the latency parameters table (different for dev and prod)
-- `SLACK_CHANNEL_ID`: ID of the Slack channel for alerts (different for dev and prod)
-- `SLACK_API_TOKEN`: Slack API token for sending messages (same for both environments)
+- **Trigger**: Push to `main` branch or manual dispatch  
+- **Function name**: `data-latency-alerts`
+- **Environment**: Production
 
 ### Secrets
+Set these secrets in your GitHub repository:
+- `GCP_SA_KEY`: JSON key of the Google Cloud service account
+- `SLACK_API_TOKEN`: Slack Bot User OAuth Token
 
-The following secrets are used in the deployment process and are set at the repository level:
+## Orchestration with Cloud Composer
 
-- `GCP_SA_KEY`: The JSON key of the Google Cloud service account
-- `SLACK_API_TOKEN`: The Slack Bot User OAuth Token
+For production workloads, you can orchestrate the data latency alerts using Cloud Composer (Apache Airflow) instead of Cloud Scheduler.
+
+### Benefits of Using Composer
+- **Better Monitoring**: Rich UI for tracking DAG runs and task status
+- **Retry Logic**: Advanced retry and failure handling capabilities
+- **Workflow Management**: Complex dependencies and conditional execution
+- **Logging**: Centralized logging and debugging capabilities
+- **Manual Triggers**: Easy manual execution and dataset-specific runs
+
+### DAG Deployment
+
+The project includes Airflow DAGs that can be deployed to your existing Cloud Composer environment:
+
+1. **Automatic Deployment**: Push changes to `main` branch or files in `dags/` folder
+2. **Manual Deployment**: Use GitHub Actions workflow dispatch
+3. **Configure Repository Variables**:
+   - `COMPOSER_ENVIRONMENT_NAME`: Your Composer environment name
+   - `COMPOSER_LOCATION`: Environment location (default: us-central1)
+
+### DAG Schedule
+- **Main DAG**: `data_latency_alerts` - Runs twice daily at 6 AM and 6 PM IST
+- **Dataset-specific DAG**: `data_latency_alerts_dataset_specific` - Manual trigger for ad-hoc checks
+
+### Required Airflow Variables
+Set these in your Composer environment:
+- `DATA_LATENCY_CLOUD_FUNCTION_URL`
+- `DATA_LATENCY_SLACK_CHANNEL_ID`
+- `DATA_LATENCY_SLACK_API_TOKEN`
+- `DATA_LATENCY_PROJECT_NAME`
 
 ## Project Structure
 
-The project is organized as follows:
+```
+data-latency-alerts/
+├── main.py                                 # Cloud Function entry point
+├── requirements.txt                        # Python dependencies
+├── utils/                                  # Utility modules
+│   ├── bigquery.py                        # BigQuery operations
+│   ├── slack.py                           # Slack notifications
+│   ├── log.py                             # Logging utilities
+│   └── utils.py                           # Helper functions
+├── sql/                                   # SQL queries
+│   └── pattern_based_latency_check.sql   # Main monitoring query
+├── dags/                                  # Airflow DAGs
+│   └── data_latency_alerts_dag.py        # Cloud Composer orchestration
+├── tests/                                 # Test files
+└── .github/workflows/                     # CI/CD workflows
+    ├── deploy-cloud-function.yml         # Cloud Function deployment
+    ├── deploy-cloud-scheduler.yml        # Cloud Scheduler deployment
+    └── deploy-dags.yml                   # Airflow DAG deployment
+```
 
-- `main.py`: The entry point of the Cloud Function.
-- `utils/`: A directory containing utility modules:
-  - `bigquery.py`: Contains functions for interacting with BigQuery and processing latency data.
-  - `logging.py`: Defines the `cprint` function for consistent logging throughout the project.
-  - `slack.py`: Handles Slack message generation and sending.
-- `tests/`: Contains test files for each module.
-- `latency_check_dataset_level.sql`: SQL query used to check for latent tables at the dataset level.
-- `latency_check_table_level.sql`: SQL query used to check for latent tables at the table level.
-- `latency_check_group_by.sql`: SQL query used to check for latent tables with group-by configuration.
-- `requirements.txt`: Lists all Python dependencies for the project.
-- `.github/workflows/`: Contains GitHub Actions workflow files for CI/CD.
+## Configuration Management
 
-## Setting Up for Other GCP Projects
+### Adding New Patterns
+```sql
+INSERT INTO `{project}.{audit_dataset}.raw_table_latency_thresholds` 
+VALUES ('SourceName', 'InternalTableName', '%pattern%', 24);
+```
 
-To set up this project for a different GCP project or client:
+### Excluding Tables
+```sql
+INSERT INTO `{project}.{audit_dataset}.ignore_latency_tables_list` 
+VALUES ('dataset_name', 'table_name');
+```
 
-1. Fork this repository to your own GitHub account or organization.
-2. In your forked repository, go to Settings > Secrets and variables > Actions.
-3. Add the necessary repository secrets and variables.
-4. Update the SQL files if you need to modify the query logic.
-5. If needed, modify the Cloud Function and Cloud Scheduler deployment workflows in the `.github/workflows` directory to match your specific requirements.
-6. Push your changes to the main branch to trigger the deployment.
-
-## Maintenance
-
-To maintain this system for multiple clients:
-
-1. Create a separate fork for each client.
-2. Set up the secrets and variables for each client's repository as described above.
-3. If needed, create client-specific branches for customizations.
-4. Use GitHub Actions to automate deployments for each client.
-5. Regularly sync the forks with the main repository to get the latest updates and features.
+### Disabling Pattern Monitoring
+```sql
+UPDATE `{project}.{audit_dataset}.raw_table_latency_thresholds` 
+SET latency_threshold = NULL 
+WHERE table_pattern LIKE '%pattern%';
+```
 
 ## Contributing
 
-Contributions to improve the project are welcome. Please follow these steps:
-
 1. Fork the repository
-2. Create a new branch (`git checkout -b feature-branch`)
-3. Make your changes and commit (`git commit -am 'Add some feature'`)
-4. Push to the branch (`git push origin feature-branch`)
-5. Create a new Pull Request
+2. Create a feature branch (`git checkout -b feature/new-feature`)
+3. Make your changes and commit (`git commit -am 'Add new feature'`)
+4. Push to the branch (`git push origin feature/new-feature`)
+5. Create a Pull Request
