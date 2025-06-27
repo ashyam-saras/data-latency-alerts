@@ -7,6 +7,11 @@ This DAG orchestrates data latency monitoring by:
 3. Sending CSV file to Slack with SlackAPIFileOperator
 
 The DAG is scheduled to run twice daily at 6 AM and 6 PM IST.
+
+REQUIREMENTS:
+- BigQuery connection must have permissions to query INFORMATION_SCHEMA
+- Service account needs: BigQuery Data Viewer, BigQuery Job User
+- For INFORMATION_SCHEMA.SCHEMATA_OPTIONS access, may need additional permissions
 """
 
 import logging
@@ -37,6 +42,9 @@ DEFAULT_ARGS = {
 PROJECT_NAME = Variable.get("PROJECT_NAME", "insightsprod")
 AUDIT_DATASET_NAME = Variable.get("AUDIT_DATASET_NAME", "edm_insights_metadata")
 LOCATION = Variable.get("BIGQUERY_LOCATION", "us-central1")
+
+# BigQuery connection configuration
+BIGQUERY_CONN_ID = "data_latency_alerts__conn_id"
 
 # Slack configuration from Airflow Variables
 SLACK_CONN_ID = "slack_default"
@@ -126,6 +134,7 @@ with DAG(
         },
         location=LOCATION,
         project_id=PROJECT_NAME,
+        gcp_conn_id=BIGQUERY_CONN_ID,  # Use specific BigQuery connection
         deferrable=True,  # Use deferrable mode for better resource efficiency
     )
 
@@ -140,7 +149,6 @@ with DAG(
         initial_comment="🔍 **Data Latency Check Results** 📊\n"
         "Here are the latest latency monitoring results. "
         "Please find the detailed report in the attached CSV file.",
-        filename="data_latency_check_{{ ds }}.csv",
         filetype="csv",
         content="{{ ti.xcom_pull(task_ids='convert_results_to_csv') }}",
         title="Data Latency Check Report - {{ ds }}",
@@ -155,7 +163,6 @@ with DAG(
         f"📊 DAG: `{DAG_ID}`\n"
         "⏰ Execution Date: {{ ds }}\n"
         "❌ Check Airflow logs for details",
-        filename="dag_failure_log_{{ ds }}.txt",
         filetype="txt",
         content="DAG Failure Details:\n"
         "DAG ID: {{ dag.dag_id }}\n"
