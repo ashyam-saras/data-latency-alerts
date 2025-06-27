@@ -1,0 +1,131 @@
+name: Deploy Airflow DAGs
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/deploy-dags.yml"
+      - "dags/**"
+  workflow_dispatch:
+    inputs:
+      DAG_BUCKET_PATH:
+        description: "GCS DAG bucket path (e.g., gs://bucket-name/dags)"
+        required: false
+        default: ""
+      ENVIRONMENT_NAME:
+        description: "Composer environment name (if not using direct bucket)"
+        required: false
+        default: ""
+      LOCATION:
+        description: "Composer environment location"
+        required: false
+        default: "us-central1"
+
+jobs:
+  deploy-dags:
+    runs-on: ubuntu-latest
+    environment: Production
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - id: "auth"
+      uses: "google-github-actions/auth@v2"
+      with:
+        credentials_json: "${{ secrets.GCP_SA_KEY }}"
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+
+    - name: Get DAG bucket path
+      id: get_bucket
+      run: |
+        # Use direct bucket path if provided
+        if [ -n "${{ github.event.inputs.DAG_BUCKET_PATH }}" ]; then
+          echo "bucket_path=${{ github.event.inputs.DAG_BUCKET_PATH }}" >> $GITHUB_OUTPUT
+          echo "Using provided bucket path: ${{ github.event.inputs.DAG_BUCKET_PATH }}"
+        elif [ -n "${{ github.event.inputs.ENVIRONMENT_NAME }}" ]; then
+          # Get bucket from environment name
+          BUCKET_PATH=$(gcloud composer environments describe ${{ github.event.inputs.ENVIRONMENT_NAME }} \
+            --location=${{ github.event.inputs.LOCATION || 'us-central1' }} \
+            --format="get(config.dagGcsPrefix)")
+          echo "bucket_path=${BUCKET_PATH}" >> $GITHUB_OUTPUT
+          echo "Retrieved bucket path from environment: ${BUCKET_PATH}"
+        else
+          # Use default environment variables
+          BUCKET_PATH=$(gcloud composer environments describe ${{ vars.COMPOSER_ENVIRONMENT_NAME }} \
+            --location=${{ vars.COMPOSER_LOCATION || 'us-central1' }} \
+            --format="get(config.dagGcsPrefix)")
+          echo "bucket_path=${BUCKET_PATH}" >> $GITHUB_OUTPUT
+          echo "Retrieved bucket path from default environment: ${BUCKET_PATH}"
+        fi
+
+    - name: Validate DAG bucket
+      run: |
+        if [ -z "${{ steps.get_bucket.outputs.bucket_path }}" ]; then
+          echo "❌ Could not determine DAG bucket path"
+          echo "Please provide either:"
+          echo "1. DAG_BUCKET_PATH input parameter"
+          echo "2. ENVIRONMENT_NAME input parameter"
+          echo "3. Set COMPOSER_ENVIRONMENT_NAME repository variable"
+          exit 1
+        fi
+        
+        # Test bucket access
+        if ! gsutil ls "${{ steps.get_bucket.outputs.bucket_path }}/" > /dev/null 2>&1; then
+          echo "❌ Cannot access DAG bucket: ${{ steps.get_bucket.outputs.bucket_path }}"
+          echo "Please check:"
+          echo "1. Bucket path is correct"
+          echo "2. Service account has Storage Object Admin permissions"
+          echo "3. Bucket exists and is accessible"
+          exit 1
+        fi
+        
+        echo "✅ DAG bucket is accessible: ${{ steps.get_bucket.outputs.bucket_path }}"
+
+    - name: Deploy DAGs
+      run: |
+        echo "🚀 Deploying DAGs to: ${{ steps.get_bucket.outputs.bucket_path }}"
+        
+        # Count DAG files
+        DAG_COUNT=$(find dags -name "*.py" -type f | wc -l)
+        echo "Found $DAG_COUNT DAG file(s) to deploy"
+        
+        if [ $DAG_COUNT -eq 0 ]; then
+          echo "⚠️ No DAG files found in dags/ directory"
+          exit 0
+        fi
+        
+        # Upload all Python files from dags directory
+        for dag_file in dags/*.py; do
+          if [ -f "$dag_file" ]; then
+            echo "📤 Uploading $(basename $dag_file)..."
+            gsutil cp "$dag_file" "${{ steps.get_bucket.outputs.bucket_path }}/"
+            
+            if [ $? -eq 0 ]; then
+              echo "✅ Successfully uploaded $(basename $dag_file)"
+            else
+              echo "❌ Failed to upload $(basename $dag_file)"
+              exit 1
+            fi
+          fi
+        done
+        
+        echo ""
+        echo "🎉 All DAGs deployed successfully!"
+        echo ""
+        echo "📋 Next Steps:"
+        echo "1. Check Airflow UI for new DAGs (may take 1-2 minutes to appear)"
+        echo "2. Enable the DAGs if they are paused"
+        echo "3. Set required Airflow Variables if not already configured:"
+        echo "   - DATA_LATENCY_CLOUD_FUNCTION_URL"
+        echo "   - DATA_LATENCY_SLACK_CHANNEL_ID"
+        echo "   - DATA_LATENCY_SLACK_API_TOKEN"
+        echo "   - DATA_LATENCY_PROJECT_NAME"
+
+    - name: List deployed DAGs
+      run: |
+        echo "📁 Current DAGs in bucket:"
+        gsutil ls "${{ steps.get_bucket.outputs.bucket_path }}/*.py" || echo "No Python files found in bucket" 

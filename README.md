@@ -153,26 +153,26 @@ For production workloads, you can orchestrate the data latency alerts using Clou
 - **Logging**: Centralized logging and debugging capabilities
 - **Manual Triggers**: Easy manual execution and dataset-specific runs
 
-### Quick Setup
+### DAG Deployment
 
-1. **Create Composer Environment**:
-   ```bash
-   cd composer
-   ./setup_composer.sh data-latency-composer us-central1
-   ```
+The project includes Airflow DAGs that can be deployed to your existing Cloud Composer environment:
 
-2. **Deploy DAGs**:
-   ```bash
-   ./deploy_dags.sh data-latency-composer us-central1
-   ```
-
-3. **Configure Variables**: Set up Airflow variables for your Cloud Function URL and Slack credentials
+1. **Automatic Deployment**: Push changes to `main` branch or files in `dags/` folder
+2. **Manual Deployment**: Use GitHub Actions workflow dispatch
+3. **Configure Repository Variables**:
+   - `COMPOSER_ENVIRONMENT_NAME`: Your Composer environment name
+   - `COMPOSER_LOCATION`: Environment location (default: us-central1)
 
 ### DAG Schedule
-- **Main DAG**: Runs twice daily at 6 AM and 6 PM IST
-- **Dataset-specific DAG**: Manual trigger for ad-hoc checks
+- **Main DAG**: `data_latency_alerts` - Runs twice daily at 6 AM and 6 PM IST
+- **Dataset-specific DAG**: `data_latency_alerts_dataset_specific` - Manual trigger for ad-hoc checks
 
-For detailed setup instructions, see [composer/README.md](composer/README.md).
+### Required Airflow Variables
+Set these in your Composer environment:
+- `DATA_LATENCY_CLOUD_FUNCTION_URL`
+- `DATA_LATENCY_SLACK_CHANNEL_ID`
+- `DATA_LATENCY_SLACK_API_TOKEN`
+- `DATA_LATENCY_PROJECT_NAME`
 
 ## Project Structure
 
@@ -189,13 +189,11 @@ data-latency-alerts/
 │   └── pattern_based_latency_check.sql   # Main monitoring query
 ├── dags/                                  # Airflow DAGs
 │   └── data_latency_alerts_dag.py        # Cloud Composer orchestration
-├── composer/                              # Cloud Composer setup
-│   ├── README.md                          # Composer documentation
-│   ├── setup_composer.sh                 # Environment setup script
-│   ├── deploy_dags.sh                     # DAG deployment script
-│   └── requirements.txt                   # Composer Python dependencies
 ├── tests/                                 # Test files
 └── .github/workflows/                     # CI/CD workflows
+    ├── deploy-cloud-function.yml         # Cloud Function deployment
+    ├── deploy-cloud-scheduler.yml        # Cloud Scheduler deployment
+    └── deploy-dags.yml                   # Airflow DAG deployment
 ```
 
 ## Configuration Management
