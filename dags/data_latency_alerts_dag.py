@@ -2,31 +2,37 @@
 Data Latency Alerts DAG
 
 This DAG orchestrates data latency monitoring by:
-1. Executing BigQuery latency checks using native operators
-2. Saving results as CSV file
-3. Sending CSV file to Slack with SlackAPIFileOperator
+1. Executing BigQuery latency checks using utility functions
+2. Converting results to CSV format
+3. Sending CSV file to Slack channels
 
 The DAG is scheduled to run twice daily at 6 AM and 6 PM IST.
 
 REQUIREMENTS:
-- BigQuery connection must have permissions to query INFORMATION_SCHEMA
+- BigQuery connection with permissions to query INFORMATION_SCHEMA
 - Service account needs: BigQuery Data Viewer, BigQuery Job User
-- For INFORMATION_SCHEMA.SCHEMATA_OPTIONS access, may need additional permissions
 - Google Drive API must be enabled (for external table access to Google Sheets)
 - Service account needs Google Drive read permissions for ignore_latency_tables_list table
-- Required scopes: bigquery, drive.readonly
+- Slack connection with necessary scopes for file uploads and messaging
 """
 
 import logging
+import os
 from datetime import timedelta
 
 from airflow import DAG
-from airflow.decorators import task
+from airflow.configuration import conf
 from airflow.models import Variable
-from airflow.providers.google.cloud.operators.bigquery import BigQueryInsertJobOperator
-from airflow.providers.slack.operators.slack import SlackAPIFileOperator
+from airflow.operators.python import PythonOperator
 from airflow.utils.dates import days_ago
 
+# Import our utility functions
+from utils import (
+    convert_results_to_csv,
+    execute_bigquery_latency_check,
+    send_failure_notification,
+    send_latency_report_to_slack,
+)
 
 # Configuration from Airflow Variables
 PROJECT_NAME = Variable.get("PROJECT_NAME", "insightsprod")
@@ -38,7 +44,9 @@ BIGQUERY_CONN_ID = "data_latency_alerts__conn_id"
 
 # Slack configuration from Airflow Variables
 SLACK_CONN_ID = "slack_default"
-SLACK_CHANNEL_ID = Variable.get("SLACK_CHANNEL_ID", "#slack-bot-test")
+SLACK_CHANNELS_STR = Variable.get("SLACK_CHANNELS", "#slack-bot-test")
+# Split comma-separated channels and strip whitespace
+SLACK_CHANNELS = [channel.strip() for channel in SLACK_CHANNELS_STR.split(",")]
 
 # SQL file path (relative to DAGs bucket)
 SQL_PATH = "sql/latency_check_query.sql"
@@ -55,128 +63,112 @@ DEFAULT_ARGS = {
     "retries": 0,
     "retry_delay": timedelta(minutes=0),
     "catchup": False,
-    "slack_conn_id": "slack_default",
-    "channel": SLACK_CHANNEL_ID,
 }
 
-@task(task_id="convert_results_to_csv")
-def convert_results_to_csv(**context) -> str:
+
+def run_bigquery_latency_check(**context):
     """
-    Convert BigQuery results to CSV format for Slack file upload.
-
-    Returns:
-        str: CSV content as string
+    Execute BigQuery latency check and return results.
     """
-    import csv
-    import io
+    # Read SQL file content
 
-    logging.info("Converting BigQuery results to CSV")
+    # Get the DAGs folder path
+    dags_folder = conf.get("core", "dags_folder")
+    sql_file_path = os.path.join(dags_folder, SQL_PATH)
 
-    try:
-        # Get results from the BigQuery task via XCom
-        task_instance = context["task_instance"]
-        results = task_instance.xcom_pull(task_ids="run_latency_check")
+    with open(sql_file_path, "r") as file:
+        sql_query = file.read()
 
-        if not results:
-            # Create CSV with header and no violations message
-            csv_content = "message\nNo latency violations found - all tables are up to date! ✅"
-            logging.info("✅ No latency violations found")
-            return csv_content
+    # Execute the query using our utility function
+    results = execute_bigquery_latency_check(
+        sql_query=sql_query,
+        project_id=PROJECT_NAME,
+        location=LOCATION,
+        gcp_conn_id=BIGQUERY_CONN_ID,
+        project_name=PROJECT_NAME,
+        audit_dataset_name=AUDIT_DATASET_NAME,
+        target_dataset=None,  # No specific dataset filter
+    )
 
-        # Convert results to CSV format
-        output = io.StringIO()
+    return results
 
-        if results:
-            # Get field names from first row
-            fieldnames = list(results[0].keys())
-            writer = csv.DictWriter(output, fieldnames=fieldnames)
 
-            # Write header and data
-            writer.writeheader()
-            writer.writerows(results)
+def convert_and_send_to_slack(**context):
+    """
+    Convert BigQuery results to CSV and send to Slack.
+    """
+    # Get results from the BigQuery task via XCom
+    task_instance = context["task_instance"]
+    results = task_instance.xcom_pull(task_ids="run_latency_check")
 
-        csv_content = output.getvalue()
-        output.close()
+    # Convert to CSV
+    csv_content = convert_results_to_csv(results)
 
-        total_violations = len(results)
-        logging.info(f"📊 Generated CSV with {total_violations} latency violations")
+    # Send to Slack
+    execution_date = context.get("ds", "")
+    send_latency_report_to_slack(
+        csv_content=csv_content, channels=SLACK_CHANNELS, execution_date=execution_date, slack_conn_id=SLACK_CONN_ID
+    )
 
-        return csv_content
+    logging.info("✅ Report sent to Slack")
+    return "success"
 
-    except Exception as e:
-        error_msg = f"Error converting results to CSV: {str(e)}"
-        logging.error(error_msg)
 
-        # Return error CSV
-        csv_content = f"error\n{error_msg}"
-        return csv_content
+def notify_failure(**context):
+    """
+    Handle DAG failure notifications.
+    """
+    # Get the error from the context
+    error_message = "DAG task failed - check logs for details"
+    execution_date = context.get("ds", "")
+
+    send_failure_notification(
+        error_message=error_message,
+        channels=SLACK_CHANNELS,
+        dag_id=DAG_ID,
+        execution_date=execution_date,
+        slack_conn_id=SLACK_CONN_ID,
+    )
+
+    logging.info("Failure notification sent to Slack")
+    return "failure_notified"
 
 
 # Create the main DAG
 with DAG(
     dag_id=DAG_ID,
     default_args=DEFAULT_ARGS,
-    description="Simplified BigQuery data latency monitoring with CSV file upload to Slack",
+    description="Simple BigQuery data latency monitoring with Slack notifications",
     schedule_interval=SCHEDULE_INTERVAL,
     tags=["data-quality", "monitoring", "alerts", "bigquery", "slack"],
     max_active_runs=1,
     doc_md=__doc__,
 ) as dag:
 
-    # Task 1: Run the latency check using native BigQuery operator
-    latency_check_task = BigQueryInsertJobOperator(
+    # Task 1: Run the latency check using utility function
+    latency_check_task = PythonOperator(
         task_id="run_latency_check",
-        configuration={
-            "query": {
-                "query": "{% include '" + SQL_PATH + "' %}",
-                "useLegacySql": False,
-            }
-        },
-        params={
-            "project_name": PROJECT_NAME,
-            "audit_dataset_name": AUDIT_DATASET_NAME,
-            "target_dataset": None,  # No specific dataset filter
-        },
-        location=LOCATION,
-        project_id=PROJECT_NAME,
-        gcp_conn_id=BIGQUERY_CONN_ID,  # Use specific BigQuery connection
-        deferrable=True,  # Use deferrable mode for better resource efficiency
+        python_callable=run_bigquery_latency_check,
+        provide_context=True,
     )
 
-    # Task 2: Convert results to CSV
-    csv_task = convert_results_to_csv()
-
-    # Task 3: Send CSV file to Slack
-    send_csv_to_slack = SlackAPIFileOperator(
-        task_id="send_csv_to_slack",
-        initial_comment="🔍 **Data Latency Check Results** 📊\n"
-        "Here are the latest latency monitoring results. "
-        "Please find the detailed report in the attached CSV file.",
-        filetype="csv",
-        content="{{ ti.xcom_pull(task_ids='convert_results_to_csv') }}",
-        title="Data Latency Check Report - {{ ds }}",
+    # Task 2: Convert results to CSV and send to Slack
+    send_report_task = PythonOperator(
+        task_id="convert_and_send_to_slack",
+        python_callable=convert_and_send_to_slack,
+        provide_context=True,
     )
 
-    # Task 4: Failure notification (if any task fails)
-    notify_failure = SlackAPIFileOperator(
+    # Task 3: Failure notification (if any task fails)
+    notify_failure_task = PythonOperator(
         task_id="notify_failure",
-        initial_comment="🚨 **Data Latency Check DAG Failed** 🚨\n"
-        f"📊 DAG: `{DAG_ID}`\n"
-        "⏰ Execution Date: {{ ds }}\n"
-        "❌ Check Airflow logs for details",
-        filetype="txt",
-        content="DAG Failure Details:\n"
-        "DAG ID: {{ dag.dag_id }}\n"
-        "Task ID: {{ task_instance.task_id }}\n"
-        "Execution Date: {{ ds }}\n"
-        "Run ID: {{ run_id }}\n"
-        "\nPlease check Airflow UI for detailed logs and error messages.",
-        title="DAG Failure Report - {{ ds }}",
+        python_callable=notify_failure,
+        provide_context=True,
         trigger_rule="one_failed",  # Only runs if upstream tasks fail
     )
 
     # Set up task dependencies
-    latency_check_task >> csv_task >> send_csv_to_slack
+    latency_check_task >> send_report_task
 
     # Failure notification dependencies
-    [latency_check_task, csv_task] >> notify_failure
+    [latency_check_task, send_report_task] >> notify_failure_task
