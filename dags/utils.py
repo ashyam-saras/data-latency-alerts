@@ -331,11 +331,20 @@ def send_latency_report_to_slack(
     if template_key in block_templates:
         blocks = block_templates[template_key]["blocks"]
 
-        # Replace placeholders in blocks
+        # Replace placeholders in blocks using string replacement
         blocks_str = json.dumps(blocks)
-        blocks_str = blocks_str.format(
-            execution_date=execution_date, dag_id=dag_id, violations_count=violations_count, **urls
-        )
+
+        # Replace all placeholders
+        replacements = {
+            "{execution_date}": execution_date,
+            "{dag_id}": dag_id,
+            "{violations_count}": str(violations_count),
+        }
+        replacements.update({f"{{{k}}}": v for k, v in urls.items()})
+
+        for placeholder, value in replacements.items():
+            blocks_str = blocks_str.replace(placeholder, value)
+
         formatted_blocks = json.loads(blocks_str)
 
         # Send blocks message first
@@ -418,15 +427,21 @@ def send_failure_notification(
     if template_key in block_templates:
         blocks = block_templates[template_key]["blocks"]
 
-        # Replace placeholders in blocks
+        # Replace placeholders in blocks using string replacement
         blocks_str = json.dumps(blocks)
-        blocks_str = blocks_str.format(
-            execution_date=execution_date,
-            dag_id=dag_id,
-            failed_task_id=failed_task_id or "unknown",
-            error_message=error_message[:500],  # Limit error message length
-            **urls,
-        )
+
+        # Replace all placeholders
+        replacements = {
+            "{execution_date}": execution_date,
+            "{dag_id}": dag_id,
+            "{failed_task_id}": failed_task_id or "unknown",
+            "{error_message}": error_message[:500],  # Limit error message length
+        }
+        replacements.update({f"{{{k}}}": v for k, v in urls.items()})
+
+        for placeholder, value in replacements.items():
+            blocks_str = blocks_str.replace(placeholder, value)
+
         formatted_blocks = json.loads(blocks_str)
 
         # Send blocks message
