@@ -18,7 +18,11 @@ REQUIREMENTS:
 
 import logging
 import os
+
+# Import our utility functions
+import sys
 from datetime import timedelta
+from pathlib import Path
 
 from airflow import DAG
 from airflow.configuration import conf
@@ -26,7 +30,10 @@ from airflow.models import Variable
 from airflow.operators.python import PythonOperator
 from airflow.utils.dates import days_ago
 
-# Import our utility functions
+# Add the current directory to Python path to find utils module
+current_dir = Path(__file__).parent
+sys.path.insert(0, str(current_dir))
+
 from utils import (
     convert_results_to_csv,
     execute_bigquery_latency_check,
