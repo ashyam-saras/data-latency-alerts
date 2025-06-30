@@ -1,0 +1,302 @@
+{
+    "latency_report_success": {
+        "blocks": [
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": "Data Latency Check Results"
+                }
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {
+                        "type": "mrkdwn",
+                        "text": "*Status:* Completed"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": "*Execution Date:* {execution_date}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": "*DAG:* `{dag_id}`"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": "*Violations Found:* {violations_count}"
+                    }
+                ]
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "Latest latency monitoring results are attached as a CSV file."
+                }
+            },
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "View in Airflow"
+                        },
+                        "style": "primary",
+                        "url": "{airflow_url}"
+                    }
+                ]
+            }
+        ]
+    },
+    "latency_report_no_violations": {
+        "blocks": [
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": "Data Latency Check Results"
+                }
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {
+                        "type": "mrkdwn",
+                        "text": "*Status:* All Clear ✅"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": "*Execution Date:* {execution_date}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": "*DAG:* `{dag_id}`"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": "*Result:* No latency violations"
+                    }
+                ]
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "All tables are up to date and within acceptable latency thresholds."
+                }
+            },
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "View in Airflow"
+                        },
+                        "style": "primary",
+                        "url": "{airflow_url}"
+                    }
+                ]
+            }
+        ]
+    },
+    "dag_failure": {
+        "blocks": [
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": "Data Latency Check Failed"
+                }
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {
+                        "type": "mrkdwn",
+                        "text": "*Status:* Failed ❌"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": "*Execution Date:* {execution_date}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": "*DAG:* `{dag_id}`"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": "*Failed Task:* `{failed_task_id}`"
+                    }
+                ]
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "*Error Details:*\n```{error_message}```"
+                }
+            },
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": "Please check the Airflow logs for detailed error information."
+                    }
+                ]
+            },
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "View Failed Task Logs"
+                        },
+                        "style": "danger",
+                        "url": "{airflow_task_url}"
+                    },
+                    {
+                        "type": "button",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "View DAG"
+                        },
+                        "url": "{airflow_dag_url}"
+                    }
+                ]
+            }
+        ]
+    },
+    "bigquery_failure": {
+        "blocks": [
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": "BigQuery Execution Failed"
+                }
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {
+                        "type": "mrkdwn",
+                        "text": "*Status:* BigQuery Error ❌"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": "*Execution Date:* {execution_date}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": "*DAG:* `{dag_id}`"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": "*Task:* `run_latency_check`"
+                    }
+                ]
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "*Error:*\n```{error_message}```"
+                }
+            },
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": "Common causes: permissions, SQL syntax, or connection issues."
+                    }
+                ]
+            },
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "View BigQuery Logs"
+                        },
+                        "style": "danger",
+                        "url": "{airflow_task_url}"
+                    }
+                ]
+            }
+        ]
+    },
+    "slack_failure": {
+        "blocks": [
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": "Slack Notification Failed"
+                }
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {
+                        "type": "mrkdwn",
+                        "text": "*Status:* Slack Error ❌"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": "*Execution Date:* {execution_date}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": "*DAG:* `{dag_id}`"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": "*Task:* `convert_and_send_to_slack`"
+                    }
+                ]
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "*Error:*\n```{error_message}```"
+                }
+            },
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": "Common causes: missing scopes, invalid channels, or API token issues."
+                    }
+                ]
+            },
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "View Slack Task Logs"
+                        },
+                        "style": "danger",
+                        "url": "{airflow_task_url}"
+                    }
+                ]
+            }
+        ]
+    }
+}

@@ -4,9 +4,15 @@ Data Latency Alerts DAG
 This DAG orchestrates data latency monitoring by:
 1. Executing BigQuery latency checks using utility functions
 2. Converting results to CSV format
-3. Sending CSV file to Slack channels
+3. Sending formatted Slack notifications with rich blocks and CSV attachments
 
 The DAG is scheduled to run twice daily at 6 AM and 6 PM IST.
+
+FEATURES:
+- Rich Slack notifications with professional formatting
+- Direct links to Airflow logs for failed tasks
+- Different notification styles for success vs failure cases
+- Automatic violation counting and smart templates
 
 REQUIREMENTS:
 - BigQuery connection with permissions to query INFORMATION_SCHEMA
@@ -14,6 +20,13 @@ REQUIREMENTS:
 - Google Drive API must be enabled (for external table access to Google Sheets)
 - Service account needs Google Drive read permissions for ignore_latency_tables_list table
 - Slack connection with necessary scopes for file uploads and messaging
+
+AIRFLOW VARIABLES:
+- PROJECT_NAME: GCP project name (default: insightsprod)
+- AUDIT_DATASET_NAME: Metadata dataset name (default: edm_insights_metadata)
+- BIGQUERY_LOCATION: BigQuery location (default: us-central1)
+- SLACK_CHANNELS: Comma-separated Slack channels (default: #slack-bot-test)
+- AIRFLOW_BASE_URL: Optional base URL for Airflow web UI (for DAG links, auto-detected for task logs)
 """
 
 import logging
@@ -114,7 +127,12 @@ def convert_and_send_to_slack(**context):
     # Send to Slack
     execution_date = context.get("ds", "")
     send_latency_report_to_slack(
-        csv_content=csv_content, channels=SLACK_CHANNELS, execution_date=execution_date, slack_conn_id=SLACK_CONN_ID
+        csv_content=csv_content,
+        channels=SLACK_CHANNELS,
+        execution_date=execution_date,
+        dag_id=DAG_ID,
+        task_instance=task_instance,
+        slack_conn_id=SLACK_CONN_ID,
     )
 
     logging.info("✅ Report sent to Slack")
@@ -129,11 +147,20 @@ def notify_failure(**context):
     error_message = "DAG task failed - check logs for details"
     execution_date = context.get("ds", "")
 
+    # Get the task instance from context
+    task_instance = context.get("task_instance")
+    failed_task_id = None
+
+    if task_instance:
+        failed_task_id = task_instance.task_id
+
     send_failure_notification(
         error_message=error_message,
         channels=SLACK_CHANNELS,
         dag_id=DAG_ID,
         execution_date=execution_date,
+        failed_task_id=failed_task_id,
+        task_instance=task_instance,
         slack_conn_id=SLACK_CONN_ID,
     )
 
