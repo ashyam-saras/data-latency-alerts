@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Union
 
 from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 from airflow.providers.slack.hooks.slack import SlackHook
+from jinja2 import Template
 
 
 def execute_bigquery_latency_check(
@@ -43,8 +44,12 @@ def execute_bigquery_latency_check(
         # Initialize BigQuery hook
         bq_hook = BigQueryHook(gcp_conn_id=gcp_conn_id, location=location, use_legacy_sql=False)
 
-        # Format the query with parameters
-        formatted_query = sql_query.format(**params) if params else sql_query
+        # Format the query with parameters using Jinja2 templating
+        if params:
+            template = Template(sql_query)
+            formatted_query = template.render(params=params)
+        else:
+            formatted_query = sql_query
 
         logging.info(f"📋 Parameters: {params}")
         logging.info(f"📝 Formatted query (first 500 chars): {formatted_query[:500]}...")
