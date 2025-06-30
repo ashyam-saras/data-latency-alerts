@@ -16,7 +16,7 @@ with
     -- Get table labels as JSON
     table_labels as (
         select distinct table_schema, table_name
-        from `{{ params.project_name }}.{{ params.audit_dataset_name }}.ignore_latency_tables_list`
+        from `{{ params.project_name }}.{{ params.audit_dataset_name }}.ignore_latency_tables_list_view`
     ),
 
     matched_tables as (
