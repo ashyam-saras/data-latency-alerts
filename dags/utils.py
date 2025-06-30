@@ -36,25 +36,41 @@ def execute_bigquery_latency_check(
     Returns:
         List of dictionaries containing query results
     """
-    logging.info("🔍 Starting BigQuery latency check...")
+    try:
+        logging.info("🔍 Starting BigQuery latency check...")
+        logging.info(f"📊 Project: {project_id}, Location: {location}, Connection: {gcp_conn_id}")
 
-    # Initialize BigQuery hook
-    bq_hook = BigQueryHook(gcp_conn_id=gcp_conn_id, location=location, use_legacy_sql=False)
+        # Initialize BigQuery hook
+        bq_hook = BigQueryHook(gcp_conn_id=gcp_conn_id, location=location, use_legacy_sql=False)
 
-    # Format the query with parameters
-    formatted_query = sql_query.format(**params) if params else sql_query
+        # Format the query with parameters
+        formatted_query = sql_query.format(**params) if params else sql_query
 
-    logging.info(f"📊 Executing query in project: {project_id}")
+        logging.info(f"📋 Parameters: {params}")
+        logging.info(f"📝 Formatted query (first 500 chars): {formatted_query[:500]}...")
 
-    # Execute the query
-    results = bq_hook.get_pandas_df(sql=formatted_query, parameters=None, dialect="standard")
+        # Execute the query
+        logging.info("⚡ Executing BigQuery...")
+        results = bq_hook.get_pandas_df(sql=formatted_query, parameters=None, dialect="standard")
 
-    # Convert DataFrame to list of dictionaries
-    results_list = results.to_dict("records") if not results.empty else []
+        # Convert DataFrame to list of dictionaries
+        results_list = results.to_dict("records") if not results.empty else []
 
-    logging.info(f"✅ BigQuery execution completed. Found {len(results_list)} latency violations")
+        logging.info(f"✅ BigQuery execution completed. Found {len(results_list)} latency violations")
 
-    return results_list
+        if results_list:
+            logging.info(f"📈 Sample result keys: {list(results_list[0].keys()) if results_list else 'None'}")
+
+        return results_list
+
+    except Exception as e:
+        error_msg = f"❌ BigQuery execution failed: {str(e)}"
+        logging.error(error_msg)
+        logging.error(f"📋 Query parameters were: {params}")
+        logging.error(
+            f"📝 Query was: {formatted_query[:1000] if 'formatted_query' in locals() else 'Query formatting failed'}"
+        )
+        raise Exception(error_msg)
 
 
 def convert_results_to_csv(results: List[Dict[str, Any]]) -> str:
@@ -128,8 +144,16 @@ def send_slack_file(
     for channel in channels:
         logging.info(f"Sending to channel: {channel}")
 
-        response = slack_hook.send_file(
-            channels=channel, file=file_content, filename=filename, initial_comment=initial_comment, filetype=filetype
+        # Use the correct SlackHook API method for file upload
+        response = slack_hook.call(
+            api_method="files.upload",
+            data={
+                "channels": channel,
+                "content": file_content,
+                "filename": filename,
+                "initial_comment": initial_comment,
+                "filetype": filetype,
+            },
         )
 
         if response.get("ok"):
@@ -171,7 +195,8 @@ def send_slack_message(
     for channel in channels:
         logging.info(f"Sending to channel: {channel}")
 
-        response = slack_hook.send_message(channel=channel, text=text)
+        # Use the correct SlackHook API method
+        response = slack_hook.call(api_method="chat.postMessage", json={"channel": channel, "text": text})
 
         if response.get("ok"):
             logging.info(f"✅ Message sent to {channel} successfully")
