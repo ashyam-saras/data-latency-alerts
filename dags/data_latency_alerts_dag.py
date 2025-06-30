@@ -12,6 +12,9 @@ REQUIREMENTS:
 - BigQuery connection must have permissions to query INFORMATION_SCHEMA
 - Service account needs: BigQuery Data Viewer, BigQuery Job User
 - For INFORMATION_SCHEMA.SCHEMATA_OPTIONS access, may need additional permissions
+- Google Drive API must be enabled (for external table access to Google Sheets)
+- Service account needs Google Drive read permissions for ignore_latency_tables_list table
+- Required scopes: bigquery, drive.readonly
 """
 
 import logging
@@ -23,6 +26,22 @@ from airflow.models import Variable
 from airflow.providers.google.cloud.operators.bigquery import BigQueryInsertJobOperator
 from airflow.providers.slack.operators.slack import SlackAPIFileOperator
 from airflow.utils.dates import days_ago
+
+
+# Configuration from Airflow Variables
+PROJECT_NAME = Variable.get("PROJECT_NAME", "insightsprod")
+AUDIT_DATASET_NAME = Variable.get("AUDIT_DATASET_NAME", "edm_insights_metadata")
+LOCATION = Variable.get("BIGQUERY_LOCATION", "us-central1")
+
+# BigQuery connection configuration
+BIGQUERY_CONN_ID = "data_latency_alerts__conn_id"
+
+# Slack configuration from Airflow Variables
+SLACK_CONN_ID = "slack_default"
+SLACK_CHANNEL_ID = Variable.get("SLACK_CHANNEL_ID", "#slack-bot-test")
+
+# SQL file path (relative to DAGs bucket)
+SQL_PATH = "sql/latency_check_query.sql"
 
 # DAG Configuration
 DAG_ID = "data_latency_alerts"
@@ -36,23 +55,9 @@ DEFAULT_ARGS = {
     "retries": 0,
     "retry_delay": timedelta(minutes=0),
     "catchup": False,
+    "slack_conn_id": "slack_default",
+    "channel": SLACK_CHANNEL_ID,
 }
-
-# Configuration from Airflow Variables
-PROJECT_NAME = Variable.get("PROJECT_NAME", "insightsprod")
-AUDIT_DATASET_NAME = Variable.get("AUDIT_DATASET_NAME", "edm_insights_metadata")
-LOCATION = Variable.get("BIGQUERY_LOCATION", "us-central1")
-
-# BigQuery connection configuration
-BIGQUERY_CONN_ID = "data_latency_alerts__conn_id"
-
-# Slack configuration from Airflow Variables
-SLACK_CONN_ID = "slack_default"
-SLACK_CHANNEL_ID = Variable.get("SLACK_CHANNEL_ID", "#data-alerts")
-
-# SQL file path (relative to DAGs bucket)
-SQL_PATH = "sql/latency_check_query.sql"
-
 
 @task(task_id="convert_results_to_csv")
 def convert_results_to_csv(**context) -> str:
@@ -144,8 +149,6 @@ with DAG(
     # Task 3: Send CSV file to Slack
     send_csv_to_slack = SlackAPIFileOperator(
         task_id="send_csv_to_slack",
-        slack_conn_id=SLACK_CONN_ID,
-        channels=SLACK_CHANNEL_ID,
         initial_comment="🔍 **Data Latency Check Results** 📊\n"
         "Here are the latest latency monitoring results. "
         "Please find the detailed report in the attached CSV file.",
@@ -157,8 +160,6 @@ with DAG(
     # Task 4: Failure notification (if any task fails)
     notify_failure = SlackAPIFileOperator(
         task_id="notify_failure",
-        slack_conn_id=SLACK_CONN_ID,
-        channels=SLACK_CHANNEL_ID,
         initial_comment="🚨 **Data Latency Check DAG Failed** 🚨\n"
         f"📊 DAG: `{DAG_ID}`\n"
         "⏰ Execution Date: {{ ds }}\n"
