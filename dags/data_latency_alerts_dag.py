@@ -25,7 +25,6 @@ from datetime import timedelta
 from pathlib import Path
 
 from airflow import DAG
-from airflow.configuration import conf
 from airflow.models import Variable
 from airflow.operators.python import PythonOperator
 from airflow.utils.dates import days_ago
@@ -78,10 +77,11 @@ def run_bigquery_latency_check(**context):
     Execute BigQuery latency check and return results.
     """
     # Read SQL file content
+    # Get the current DAG's directory (where this file is located)
+    current_dag_dir = os.path.dirname(os.path.abspath(__file__))
+    sql_file_path = os.path.join(current_dag_dir, SQL_PATH)
 
-    # Get the DAGs folder path
-    dags_folder = conf.get("core", "dags_folder")
-    sql_file_path = os.path.join(dags_folder, SQL_PATH)
+    logging.info(f"📁 Looking for SQL file at: {sql_file_path}")
 
     with open(sql_file_path, "r") as file:
         sql_query = file.read()
