@@ -41,20 +41,6 @@
             },
             {
                 "type": "divider"
-            },
-            {
-                "type": "actions",
-                "elements": [
-                    {
-                        "type": "button",
-                        "text": {
-                            "type": "plain_text",
-                            "text": "View in Airflow"
-                        },
-                        "style": "primary",
-                        "url": "{airflow_url}"
-                    }
-                ]
             }
         ]
     },

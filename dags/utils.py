@@ -464,7 +464,7 @@ def send_latency_report_to_slack(
                 channels=channels,
                 file_content=xlsx_content,
                 filename=filename,
-                initial_comment="📊 Detailed latency violation report",  # Simple, clean comment
+                initial_comment="",  # No comment needed
                 filetype="xlsx",
                 slack_conn_id=slack_conn_id,
             )
