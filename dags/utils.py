@@ -61,7 +61,7 @@ def build_airflow_urls(task_instance=None, dag_id: str = None) -> Dict[str, str]
         # Build DAG URL from task instance info
         if hasattr(task_instance, "dag_id"):
             try:
-                airflow_base_url = Variable.get("AIRFLOW_BASE_URL", "http://localhost:8080")
+                airflow_base_url = Variable.get("LATENCY_ALERTS__AIRFLOW_BASE_URL", "http://localhost:8080")
             except Exception:
                 airflow_base_url = "http://localhost:8080"
 
@@ -73,7 +73,7 @@ def build_airflow_urls(task_instance=None, dag_id: str = None) -> Dict[str, str]
     elif dag_id:
         # Fallback to manual URL construction if no task_instance
         try:
-            airflow_base_url = Variable.get("AIRFLOW_BASE_URL", "http://localhost:8080")
+            airflow_base_url = Variable.get("LATENCY_ALERTS__AIRFLOW_BASE_URL", "http://localhost:8080")
         except Exception:
             airflow_base_url = "http://localhost:8080"
 

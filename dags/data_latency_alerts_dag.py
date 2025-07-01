@@ -23,12 +23,12 @@ REQUIREMENTS:
 - Slack connection with necessary scopes for file uploads and messaging
 
 AIRFLOW VARIABLES:
-- PROJECT_NAME: GCP project name (default: insightsprod)
-- AUDIT_DATASET_NAME: Metadata dataset name (default: edm_insights_metadata)
-- BIGQUERY_LOCATION: BigQuery location (default: us-central1)
-- SLACK_CHANNELS: Comma-separated Slack channels (default: #slack-bot-test)
-- AIRFLOW_BASE_URL: Optional base URL for Airflow web UI (for DAG links, auto-detected for task logs)
-- LATENCY_ALERTS_BQ_DTS_CONFIG_ID: BigQuery DTS transfer configuration ID (must be in us-central1)
+- LATENCY_ALERTS__PROJECT_NAME: GCP project name (default: insightsprod)
+- LATENCY_ALERTS__AUDIT_DATASET_NAME: Metadata dataset name (default: edm_insights_metadata)
+- LATENCY_ALERTS__BIGQUERY_LOCATION: BigQuery location (default: us-central1)
+- LATENCY_ALERTS__SLACK_CHANNELS: Comma-separated Slack channels (default: #slack-bot-test)
+- LATENCY_ALERTS__AIRFLOW_BASE_URL: Optional base URL for Airflow web UI (for DAG links, auto-detected for task logs)
+- LATENCY_ALERTS__BQ_DTS_CONFIG_ID: BigQuery DTS transfer configuration ID (must be in us-central1)
 """
 
 import logging
@@ -58,9 +58,9 @@ from utils import (
 )
 
 # Configuration from Airflow Variables
-PROJECT_NAME = Variable.get("PROJECT_NAME", "insightsprod")
-AUDIT_DATASET_NAME = Variable.get("AUDIT_DATASET_NAME", "edm_insights_metadata")
-LOCATION = Variable.get("BIGQUERY_LOCATION", "us-central1")
+PROJECT_NAME = Variable.get("LATENCY_ALERTS__PROJECT_NAME", "insightsprod")
+AUDIT_DATASET_NAME = Variable.get("LATENCY_ALERTS__AUDIT_DATASET_NAME", "edm_insights_metadata")
+LOCATION = Variable.get("LATENCY_ALERTS__BIGQUERY_LOCATION", "us-central1")
 TRANSFER_CONFIG_ID = Variable.get("LATENCY_ALERTS__BQ_DTS_CONFIG_ID")
 
 # BigQuery connection configuration
@@ -68,7 +68,7 @@ BIGQUERY_CONN_ID = "data_latency_alerts__conn_id"
 
 # Slack configuration from Airflow Variables
 SLACK_CONN_ID = "slack_default"
-SLACK_CHANNELS_STR = Variable.get("SLACK_CHANNELS", "#slack-bot-test")
+SLACK_CHANNELS_STR = Variable.get("LATENCY_ALERTS__SLACK_CHANNELS", "#slack-bot-test")
 # Split comma-separated channels and strip whitespace
 SLACK_CHANNELS = [channel.strip() for channel in SLACK_CHANNELS_STR.split(",")]
 
