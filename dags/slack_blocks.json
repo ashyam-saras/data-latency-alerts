@@ -30,11 +30,17 @@
                 ]
             },
             {
+                "type": "divider"
+            },
+            {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": "Latest latency monitoring results are attached as a CSV file."
+                    "text": "{summary_text}"
                 }
+            },
+            {
+                "type": "divider"
             },
             {
                 "type": "actions",

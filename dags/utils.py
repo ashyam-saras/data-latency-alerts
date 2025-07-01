@@ -7,14 +7,14 @@ This module provides simple functions for:
 - CSV data processing
 """
 
-import csv
 import io
 import json
 import logging
 import os
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Tuple, Union
 from urllib.parse import quote
 
+import pandas as pd
 from airflow.models import Variable
 from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 from airflow.providers.slack.hooks.slack import SlackHook
@@ -157,45 +157,94 @@ def execute_bigquery_latency_check(
         raise Exception(error_msg)
 
 
-def convert_results_to_csv(results: List[Dict[str, Any]]) -> str:
+def calculate_dataset_summary(results: List[Dict[str, Any]]) -> Tuple[str, Dict[str, int]]:
     """
-    Convert BigQuery results to CSV format.
+    Calculate summary statistics by dataset.
 
     Args:
         results: List of dictionaries from BigQuery
 
     Returns:
-        CSV content as string
+        Tuple of (summary_text, dataset_counts)
     """
     if not results:
-        # Create CSV with header and no violations message
-        csv_content = "message\nNo latency violations found - all tables are up to date! ✅"
+        return "✅ No latency violations found - all tables are up to date!", {}
+
+    # Count violations by dataset (TABLE_SCHEMA)
+    dataset_counts = {}
+    for record in results:
+        dataset = record.get("TABLE_SCHEMA", "Unknown")
+        dataset_counts[dataset] = dataset_counts.get(dataset, 0) + 1
+
+    # Create summary text
+    total_violations = len(results)
+    total_datasets = len(dataset_counts)
+
+    summary_lines = [f"Found {total_violations} table violations across {total_datasets} datasets:"]
+
+    # Sort datasets by violation count (descending)
+    sorted_datasets = sorted(dataset_counts.items(), key=lambda x: x[1], reverse=True)
+
+    for dataset, count in sorted_datasets:
+        summary_lines.append(f"• *{dataset}*: {count} tables violate threshold")
+
+    summary_text = "\n".join(summary_lines)
+
+    logging.info(f"📊 Dataset summary: {total_violations} violations across {total_datasets} datasets")
+    for dataset, count in sorted_datasets:
+        logging.info(f"  - {dataset}: {count} tables")
+
+    return summary_text, dataset_counts
+
+
+def convert_results_to_xlsx(results: List[Dict[str, Any]]) -> bytes:
+    """
+    Convert BigQuery results to XLSX format.
+
+    Args:
+        results: List of dictionaries from BigQuery
+
+    Returns:
+        XLSX content as bytes
+    """
+    if not results:
+        # Create DataFrame with no violations message
+        df = pd.DataFrame({"message": ["No latency violations found - all tables are up to date! ✅"]})
         logging.info("✅ No latency violations found")
-        return csv_content
+    else:
+        # Convert results to DataFrame
+        df = pd.DataFrame(results)
+        total_violations = len(results)
+        logging.info(f"📊 Generated XLSX with {total_violations} latency violations")
 
-    # Convert results to CSV format
-    output = io.StringIO()
+    # Convert DataFrame to XLSX bytes
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name="Latency Violations", index=False)
 
-    # Get field names from first row
-    fieldnames = list(results[0].keys())
-    writer = csv.DictWriter(output, fieldnames=fieldnames)
+        # Auto-adjust column widths
+        worksheet = writer.sheets["Latency Violations"]
+        for col in worksheet.columns:
+            max_length = 0
+            column = col[0].column_letter
+            for cell in col:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)  # Cap at 50 characters
+            worksheet.column_dimensions[column].width = adjusted_width
 
-    # Write header and data
-    writer.writeheader()
-    writer.writerows(results)
-
-    csv_content = output.getvalue()
+    xlsx_content = output.getvalue()
     output.close()
 
-    total_violations = len(results)
-    logging.info(f"📊 Generated CSV with {total_violations} latency violations")
-
-    return csv_content
+    return xlsx_content
 
 
 def send_slack_file(
     channels: Union[str, List[str]],
-    file_content: str,
+    file_content: Union[str, bytes],
     filename: str,
     initial_comment: str = "",
     filetype: str = "csv",
@@ -206,10 +255,10 @@ def send_slack_file(
 
     Args:
         channels: Slack channel ID/name or list of channels
-        file_content: Content of the file to send
+        file_content: Content of the file to send (string for text files, bytes for binary files)
         filename: Name of the file
         initial_comment: Comment to include with the file
-        filetype: Type of file (csv, txt, etc.)
+        filetype: Type of file (csv, txt, xlsx, etc.)
         slack_conn_id: Airflow Slack connection ID
 
     Returns:
@@ -228,17 +277,48 @@ def send_slack_file(
     for channel in channels:
         logging.info(f"Sending to channel: {channel}")
 
-        # Use the correct SlackHook API method for file upload
-        response = slack_hook.call(
-            api_method="files.upload",
-            data={
-                "channels": channel,
-                "content": file_content,
-                "filename": filename,
-                "initial_comment": initial_comment,
-                "filetype": filetype,
-            },
-        )
+        # Use different approach for binary vs text files
+        if isinstance(file_content, bytes):
+            # Binary file upload (XLSX, etc.) - use SlackHook client directly
+            import io
+
+            try:
+                # Use the Slack client directly for binary file uploads
+                response = slack_hook.client.files_upload(
+                    channels=channel,
+                    file=io.BytesIO(file_content),
+                    filename=filename,
+                    initial_comment=initial_comment,
+                    filetype=filetype,
+                )
+            except Exception as e:
+                logging.error(f"❌ Failed to upload binary file using client method: {e}")
+                # Fallback: Convert to base64 and try with regular API
+                import base64
+
+                file_content_b64 = base64.b64encode(file_content).decode("utf-8")
+                response = slack_hook.call(
+                    api_method="files.upload",
+                    data={
+                        "channels": channel,
+                        "content": file_content_b64,
+                        "filename": filename,
+                        "initial_comment": initial_comment,
+                        "filetype": filetype,
+                    },
+                )
+        else:
+            # Text file upload (CSV, TXT, etc.)
+            response = slack_hook.call(
+                api_method="files.upload",
+                data={
+                    "channels": channel,
+                    "content": file_content,
+                    "filename": filename,
+                    "initial_comment": initial_comment,
+                    "filetype": filetype,
+                },
+            )
 
         if response.get("ok"):
             logging.info(f"✅ File sent to {channel} successfully")
@@ -298,7 +378,8 @@ def send_slack_message_with_blocks(
 
 
 def send_latency_report_to_slack(
-    csv_content: str,
+    xlsx_content: bytes,
+    results: List[Dict[str, Any]],
     channels: Union[str, List[str]],
     execution_date: str,
     dag_id: str = "data_latency_alerts",
@@ -309,7 +390,8 @@ def send_latency_report_to_slack(
     Send latency check report to Slack channel(s) with rich blocks formatting.
 
     Args:
-        csv_content: CSV content to send
+        xlsx_content: XLSX content bytes to send
+        results: List of violation results for summary calculation
         channels: Slack channel(s) to send to
         execution_date: DAG execution date
         dag_id: DAG identifier
@@ -322,12 +404,9 @@ def send_latency_report_to_slack(
     # Load Slack block templates
     block_templates = load_slack_blocks()
 
-    # Count violations from CSV content
-    violations_count = 0
-    if csv_content and "No latency violations found" not in csv_content:
-        # Count lines minus header
-        violations_count = len(csv_content.strip().split("\n")) - 1
-        violations_count = max(0, violations_count)  # Ensure non-negative
+    # Calculate dataset summary
+    summary_text, dataset_counts = calculate_dataset_summary(results)
+    violations_count = len(results)
 
     # Build Airflow URLs
     urls = build_airflow_urls(task_instance=task_instance, dag_id=dag_id)
@@ -342,23 +421,35 @@ def send_latency_report_to_slack(
     if template_key in block_templates:
         blocks = block_templates[template_key]["blocks"]
 
-        # Replace placeholders in blocks using string replacement
+        # Convert blocks to string for placeholder replacement
         blocks_str = json.dumps(blocks)
 
-        # Replace all placeholders
+        # Replace placeholders with raw values (not JSON-encoded)
+        # This avoids double-encoding issues since we're inserting into JSON strings
         replacements = {
             "{execution_date}": execution_date,
             "{dag_id}": dag_id,
             "{violations_count}": str(violations_count),
+            "{summary_text}": summary_text.replace('"', '\\"').replace("\n", "\\n"),  # Escape for JSON
         }
-        replacements.update({f"{{{k}}}": v for k, v in urls.items()})
+        # URLs need escaping too
+        for k, v in urls.items():
+            replacements[f"{{{k}}}"] = v.replace('"', '\\"') if v else ""
 
         for placeholder, value in replacements.items():
             blocks_str = blocks_str.replace(placeholder, value)
 
-        formatted_blocks = json.loads(blocks_str)
+        # Parse back to blocks object
+        try:
+            formatted_blocks = json.loads(blocks_str)
+        except json.JSONDecodeError as e:
+            logging.error(f"❌ JSON parsing failed at position {e.pos}")
+            logging.error(f"❌ Error: {e.msg}")
+            logging.error(f"❌ Context around error: {blocks_str[max(0, e.pos-50):e.pos+50]}")
+            logging.error(f"❌ Full blocks_str: {blocks_str}")
+            raise
 
-        # Send blocks message first
+        # Send the beautiful blocks message first
         blocks_result = send_slack_message_with_blocks(
             channels=channels,
             blocks=formatted_blocks,
@@ -366,15 +457,15 @@ def send_latency_report_to_slack(
             slack_conn_id=slack_conn_id,
         )
 
-        # If there are violations, also send the CSV file
+        # If there are violations, also send the XLSX file with minimal comment
         if violations_count > 0:
-            filename = f"data_latency_report_{execution_date}.csv"
+            filename = f"data_latency_report_{execution_date}.xlsx"
             file_result = send_slack_file(
                 channels=channels,
-                file_content=csv_content,
+                file_content=xlsx_content,
                 filename=filename,
-                initial_comment="",  # No comment needed, blocks message provides context
-                filetype="csv",
+                initial_comment="📊 Detailed latency violation report",  # Simple, clean comment
+                filetype="xlsx",
                 slack_conn_id=slack_conn_id,
             )
             return {"blocks_result": blocks_result, "file_result": file_result}
@@ -438,22 +529,33 @@ def send_failure_notification(
     if template_key in block_templates:
         blocks = block_templates[template_key]["blocks"]
 
-        # Replace placeholders in blocks using string replacement
+        # Convert blocks to string for placeholder replacement
         blocks_str = json.dumps(blocks)
 
-        # Replace all placeholders
+        # Replace placeholders with raw values (not JSON-encoded)
+        # This avoids double-encoding issues since we're inserting into JSON strings
         replacements = {
             "{execution_date}": execution_date,
             "{dag_id}": dag_id,
             "{failed_task_id}": failed_task_id or "unknown",
-            "{error_message}": error_message[:500],  # Limit error message length
+            "{error_message}": error_message[:500].replace('"', '\\"').replace("\n", "\\n"),  # Escape for JSON
         }
-        replacements.update({f"{{{k}}}": v for k, v in urls.items()})
+        # URLs need escaping too
+        for k, v in urls.items():
+            replacements[f"{{{k}}}"] = v.replace('"', '\\"') if v else ""
 
         for placeholder, value in replacements.items():
             blocks_str = blocks_str.replace(placeholder, value)
 
-        formatted_blocks = json.loads(blocks_str)
+        # Parse back to blocks object
+        try:
+            formatted_blocks = json.loads(blocks_str)
+        except json.JSONDecodeError as e:
+            logging.error(f"❌ [FAILURE] JSON parsing failed at position {e.pos}")
+            logging.error(f"❌ [FAILURE] Error: {e.msg}")
+            logging.error(f"❌ [FAILURE] Context around error: {blocks_str[max(0, e.pos-50):e.pos+50]}")
+            logging.error(f"❌ [FAILURE] Full blocks_str: {blocks_str}")
+            raise
 
         # Send blocks message
         return send_slack_message_with_blocks(

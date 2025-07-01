@@ -31,6 +31,7 @@ AIRFLOW VARIABLES:
 - LATENCY_ALERTS__BQ_DTS_CONFIG_ID: BigQuery DTS transfer configuration ID (must be in us-central1)
 """
 
+import base64
 import logging
 
 # Import our utility functions
@@ -51,7 +52,7 @@ current_dir = Path(__file__).parent
 sys.path.insert(0, str(current_dir))
 
 from utils import (
-    convert_results_to_csv,
+    convert_results_to_xlsx,
     execute_bigquery_latency_check,
     send_failure_notification,
     send_latency_report_to_slack,
@@ -113,19 +114,22 @@ def run_latency_check(**context):
     return results
 
 
-def convert_to_csv(**context):
+def convert_to_xlsx(**context):
     """
-    Convert BigQuery results to CSV format.
+    Convert BigQuery results to XLSX format.
     """
     # Get results from the latency check task via XCom
     task_instance = context["task_instance"]
     results = task_instance.xcom_pull(task_ids="run_latency_check")
 
-    # Convert to CSV
-    csv_content = convert_results_to_csv(results)
+    # Convert to XLSX
+    xlsx_content = convert_results_to_xlsx(results)
 
-    logging.info(f"📄 Converted {len(results)} records to CSV format")
-    return csv_content
+    # Encode bytes to base64 string for XCom serialization
+    xlsx_content_b64 = base64.b64encode(xlsx_content).decode("utf-8")
+
+    logging.info(f"📄 Converted {len(results)} records to XLSX format")
+    return {"xlsx_content_b64": xlsx_content_b64, "results": results}
 
 
 def send_notification(**context):
@@ -186,10 +190,16 @@ def send_notification(**context):
 
     else:
         # All tasks succeeded, send success report
-        csv_content = task_instance.xcom_pull(task_ids="convert_to_csv")
+        convert_data = task_instance.xcom_pull(task_ids="convert_to_xlsx")
+        xlsx_content_b64 = convert_data["xlsx_content_b64"]
+        results = convert_data["results"]
+
+        # Decode base64 string back to bytes
+        xlsx_content = base64.b64decode(xlsx_content_b64)
 
         send_latency_report_to_slack(
-            csv_content=csv_content,
+            xlsx_content=xlsx_content,
+            results=results,
             channels=SLACK_CHANNELS,
             execution_date=execution_date,
             dag_id=DAG_ID,
@@ -229,10 +239,10 @@ with DAG(
         provide_context=True,
     )
 
-    # Task 3: Convert results to CSV
-    convert_csv_task = PythonOperator(
-        task_id="convert_to_csv",
-        python_callable=convert_to_csv,
+    # Task 3: Convert results to XLSX
+    convert_xlsx_task = PythonOperator(
+        task_id="convert_to_xlsx",
+        python_callable=convert_to_xlsx,
         provide_context=True,
     )
 
@@ -245,7 +255,7 @@ with DAG(
     )
 
     # Set up task dependencies
-    start_transfer >> latency_check_task >> convert_csv_task >> notify_task
+    start_transfer >> latency_check_task >> convert_xlsx_task >> notify_task
 
     # Ensure notification runs even if upstream tasks fail
-    [start_transfer, latency_check_task, convert_csv_task] >> notify_task
+    [start_transfer, latency_check_task, convert_xlsx_task] >> notify_task
