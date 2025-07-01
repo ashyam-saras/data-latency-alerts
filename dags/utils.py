@@ -129,6 +129,17 @@ def execute_bigquery_latency_check(
         # Convert DataFrame to list of dictionaries
         results_list = results.to_dict("records") if not results.empty else []
 
+        # Convert pandas Timestamp objects to strings for JSON serialization
+        if results_list:
+            for record in results_list:
+                for key, value in record.items():
+                    # Convert pandas Timestamp objects to ISO format strings
+                    if hasattr(value, "isoformat"):  # This catches pandas Timestamps
+                        record[key] = value.isoformat()
+                    # Handle NaT (Not a Time) values
+                    elif str(value) == "NaT":
+                        record[key] = None
+
         logging.info(f"✅ BigQuery execution completed. Found {len(results_list)} latency violations")
 
         if results_list:

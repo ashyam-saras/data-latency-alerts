@@ -2,23 +2,24 @@
 Data Latency Alerts DAG
 
 This DAG orchestrates data latency monitoring by:
-1. Executing BigQuery latency checks using utility functions
-2. Converting results to CSV format
-3. Sending formatted Slack notifications with rich blocks and CSV attachments
+1. Triggering BigQuery Data Transfer Service job (waits for completion)
+2. Executing simple latency check query on processed data
+3. Converting results to CSV format
+4. Sending appropriate Slack notifications (success or failure)
 
 The DAG is scheduled to run twice daily at 6 AM and 6 PM IST.
 
 FEATURES:
+- BigQuery Data Transfer Service integration
 - Rich Slack notifications with professional formatting
 - Direct links to Airflow logs for failed tasks
-- Different notification styles for success vs failure cases
+- Single notification task handling both success and failure cases
 - Automatic violation counting and smart templates
 
 REQUIREMENTS:
-- BigQuery connection with permissions to query INFORMATION_SCHEMA
-- Service account needs: BigQuery Data Viewer, BigQuery Job User
-- Google Drive API must be enabled (for external table access to Google Sheets)
-- Service account needs Google Drive read permissions for ignore_latency_tables_list table
+- BigQuery Data Transfer Service permissions
+- BigQuery connection with permissions to query processed tables
+- Service account needs: BigQuery Data Viewer, BigQuery Job User, BigQuery Data Transfer Admin
 - Slack connection with necessary scopes for file uploads and messaging
 
 AIRFLOW VARIABLES:
@@ -27,20 +28,23 @@ AIRFLOW VARIABLES:
 - BIGQUERY_LOCATION: BigQuery location (default: us-central1)
 - SLACK_CHANNELS: Comma-separated Slack channels (default: #slack-bot-test)
 - AIRFLOW_BASE_URL: Optional base URL for Airflow web UI (for DAG links, auto-detected for task logs)
+- LATENCY_ALERTS_BQ_DTS_CONFIG_ID: BigQuery DTS transfer configuration ID (must be in us-central1)
 """
 
 import logging
-import os
 
 # Import our utility functions
 import sys
+import time
 from datetime import timedelta
 from pathlib import Path
 
 from airflow import DAG
 from airflow.models import Variable
 from airflow.operators.python import PythonOperator
+from airflow.providers.google.cloud.operators.bigquery_dts import BigQueryDataTransferServiceStartTransferRunsOperator
 from airflow.utils.dates import days_ago
+from airflow.utils.state import State
 
 # Add the current directory to Python path to find utils module
 current_dir = Path(__file__).parent
@@ -57,6 +61,7 @@ from utils import (
 PROJECT_NAME = Variable.get("PROJECT_NAME", "insightsprod")
 AUDIT_DATASET_NAME = Variable.get("AUDIT_DATASET_NAME", "edm_insights_metadata")
 LOCATION = Variable.get("BIGQUERY_LOCATION", "us-central1")
+TRANSFER_CONFIG_ID = Variable.get("LATENCY_ALERTS__BQ_DTS_CONFIG_ID")
 
 # BigQuery connection configuration
 BIGQUERY_CONN_ID = "data_latency_alerts__conn_id"
@@ -66,9 +71,6 @@ SLACK_CONN_ID = "slack_default"
 SLACK_CHANNELS_STR = Variable.get("SLACK_CHANNELS", "#slack-bot-test")
 # Split comma-separated channels and strip whitespace
 SLACK_CHANNELS = [channel.strip() for channel in SLACK_CHANNELS_STR.split(",")]
-
-# SQL file path (relative to DAGs bucket)
-SQL_PATH = "sql/latency_check_query.sql"
 
 # DAG Configuration
 DAG_ID = "data_latency_alerts"
@@ -85,19 +87,16 @@ DEFAULT_ARGS = {
 }
 
 
-def run_bigquery_latency_check(**context):
+def run_latency_check(**context):
     """
-    Execute BigQuery latency check and return results.
+    Execute simplified latency check query on processed data.
     """
-    # Read SQL file content
-    # Get the current DAG's directory (where this file is located)
-    current_dag_dir = os.path.dirname(os.path.abspath(__file__))
-    sql_file_path = os.path.join(current_dag_dir, SQL_PATH)
+    # Simple SQL query - no file needed
+    sql_query = (
+        "SELECT * FROM `{{ params.project_name }}.{{ params.audit_dataset_name }}.raw_table_latency_failure_details`"
+    )
 
-    logging.info(f"📁 Looking for SQL file at: {sql_file_path}")
-
-    with open(sql_file_path, "r") as file:
-        sql_query = file.read()
+    logging.info(f"🔍 Executing latency check query")
 
     # Execute the query using our utility function
     results = execute_bigquery_latency_check(
@@ -110,99 +109,143 @@ def run_bigquery_latency_check(**context):
         target_dataset=None,  # No specific dataset filter
     )
 
+    logging.info(f"📊 Latency check completed. Found {len(results)} records")
     return results
 
 
-def convert_and_send_to_slack(**context):
+def convert_to_csv(**context):
     """
-    Convert BigQuery results to CSV and send to Slack.
+    Convert BigQuery results to CSV format.
     """
-    # Get results from the BigQuery task via XCom
+    # Get results from the latency check task via XCom
     task_instance = context["task_instance"]
     results = task_instance.xcom_pull(task_ids="run_latency_check")
 
     # Convert to CSV
     csv_content = convert_results_to_csv(results)
 
-    # Send to Slack
-    execution_date = context.get("ds", "")
-    send_latency_report_to_slack(
-        csv_content=csv_content,
-        channels=SLACK_CHANNELS,
-        execution_date=execution_date,
-        dag_id=DAG_ID,
-        task_instance=task_instance,
-        slack_conn_id=SLACK_CONN_ID,
-    )
-
-    logging.info("✅ Report sent to Slack")
-    return "success"
+    logging.info(f"📄 Converted {len(results)} records to CSV format")
+    return csv_content
 
 
-def notify_failure(**context):
+def send_notification(**context):
     """
-    Handle DAG failure notifications.
+    Send appropriate notification based on upstream task states.
+    Handles both success and failure scenarios.
     """
-    # Get the error from the context
-    error_message = "DAG task failed - check logs for details"
+    dag_run = context.get("dag_run")
+    task_instance = context["task_instance"]
     execution_date = context.get("ds", "")
 
-    # Get the task instance from context
-    task_instance = context.get("task_instance")
-    failed_task_id = None
+    # Check if any upstream tasks failed
+    failed_tasks = []
+    success_tasks = []
 
-    if task_instance:
-        failed_task_id = task_instance.task_id
+    if dag_run:
+        task_instances = dag_run.get_task_instances()
+        for ti in task_instances:
+            if ti.task_id != "send_notification":  # Exclude self
+                if ti.state == State.FAILED:
+                    failed_tasks.append(ti.task_id)
+                elif ti.state == State.SUCCESS:
+                    success_tasks.append(ti.task_id)
 
-    send_failure_notification(
-        error_message=error_message,
-        channels=SLACK_CHANNELS,
-        dag_id=DAG_ID,
-        execution_date=execution_date,
-        failed_task_id=failed_task_id,
-        task_instance=task_instance,
-        slack_conn_id=SLACK_CONN_ID,
-    )
+    # If any task failed, send failure notification
+    if failed_tasks:
+        failed_task_id = failed_tasks[0]  # Use first failed task
+        error_message = f"Task '{failed_task_id}' failed - check logs for details"
 
-    logging.info("Failure notification sent to Slack")
-    return "failure_notified"
+        # Try to get more specific error context
+        if "transfer" in failed_task_id.lower():
+            error_message = f"BigQuery Data Transfer failed in task '{failed_task_id}'"
+        elif "latency" in failed_task_id.lower():
+            error_message = f"Latency check failed in task '{failed_task_id}'"
+        elif "convert" in failed_task_id.lower():
+            error_message = f"CSV conversion failed in task '{failed_task_id}'"
+
+        # Find the actual failed task instance
+        failed_task_instance = None
+        if dag_run:
+            for ti in dag_run.get_task_instances():
+                if ti.task_id == failed_task_id:
+                    failed_task_instance = ti
+                    break
+
+        send_failure_notification(
+            error_message=error_message,
+            channels=SLACK_CHANNELS,
+            dag_id=DAG_ID,
+            execution_date=execution_date,
+            failed_task_id=failed_task_id,
+            task_instance=failed_task_instance or task_instance,
+            slack_conn_id=SLACK_CONN_ID,
+        )
+
+        logging.info(f"❌ Failure notification sent for task: {failed_task_id}")
+        return "failure_notified"
+
+    else:
+        # All tasks succeeded, send success report
+        csv_content = task_instance.xcom_pull(task_ids="convert_to_csv")
+
+        send_latency_report_to_slack(
+            csv_content=csv_content,
+            channels=SLACK_CHANNELS,
+            execution_date=execution_date,
+            dag_id=DAG_ID,
+            task_instance=task_instance,
+            slack_conn_id=SLACK_CONN_ID,
+        )
+
+        logging.info("✅ Success report sent to Slack")
+        return "success_notified"
 
 
 # Create the main DAG
 with DAG(
     dag_id=DAG_ID,
     default_args=DEFAULT_ARGS,
-    description="Simple BigQuery data latency monitoring with Slack notifications",
+    description="BigQuery Data Transfer + Latency monitoring with Slack notifications",
     schedule_interval=SCHEDULE_INTERVAL,
-    tags=["data-quality", "monitoring", "alerts", "bigquery", "slack"],
+    tags=["data-quality", "monitoring", "alerts", "bigquery", "slack", "data-transfer"],
     max_active_runs=1,
     doc_md=__doc__,
 ) as dag:
 
-    # Task 1: Run the latency check using utility function
+    # Task 1: Trigger BigQuery Data Transfer Service
+    start_transfer = BigQueryDataTransferServiceStartTransferRunsOperator(
+        task_id="start_data_transfer",
+        project_id=PROJECT_NAME,
+        location=LOCATION,
+        transfer_config_id=TRANSFER_CONFIG_ID,
+        requested_run_time={"seconds": int(time.time() + 60)},  # Start in 1 minute
+        gcp_conn_id=BIGQUERY_CONN_ID,
+    )
+
+    # Task 2: Run latency check on processed data
     latency_check_task = PythonOperator(
         task_id="run_latency_check",
-        python_callable=run_bigquery_latency_check,
+        python_callable=run_latency_check,
         provide_context=True,
     )
 
-    # Task 2: Convert results to CSV and send to Slack
-    send_report_task = PythonOperator(
-        task_id="convert_and_send_to_slack",
-        python_callable=convert_and_send_to_slack,
+    # Task 3: Convert results to CSV
+    convert_csv_task = PythonOperator(
+        task_id="convert_to_csv",
+        python_callable=convert_to_csv,
         provide_context=True,
     )
 
-    # Task 3: Failure notification (if any task fails)
-    notify_failure_task = PythonOperator(
-        task_id="notify_failure",
-        python_callable=notify_failure,
+    # Task 4: Send notification (handles both success and failure)
+    notify_task = PythonOperator(
+        task_id="send_notification",
+        python_callable=send_notification,
         provide_context=True,
-        trigger_rule="one_failed",  # Only runs if upstream tasks fail
+        trigger_rule="none_skipped",  # Run regardless of upstream success/failure, as long as not skipped
     )
 
     # Set up task dependencies
-    latency_check_task >> send_report_task
+    start_transfer >> latency_check_task >> convert_csv_task >> notify_task
 
-    # Failure notification dependencies
-    [latency_check_task, send_report_task] >> notify_failure_task
+    # Ensure notification runs even if upstream tasks fail
+    [start_transfer, latency_check_task, convert_csv_task] >> notify_task
