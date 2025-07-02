@@ -2,7 +2,7 @@
 
 # Data Latency Alerts
 
-A streamlined Airflow DAG that monitors data freshness by integrating with BigQuery Data Transfer Service and sends rich Slack notifications with CSV reports.
+A streamlined Airflow DAG that monitors data freshness by integrating with BigQuery Data Transfer Service and sends rich Slack notifications with XLSX reports in threaded conversations.
 
 ## 🏗️ Architecture Overview
 
@@ -10,13 +10,14 @@ Simple and efficient workflow:
 
 1. **BigQuery Data Transfer Service**: Triggers pre-configured transfer job and waits for completion
 2. **Direct Query**: Simple `SELECT *` from processed results table
-3. **CSV Generation**: Converts results to CSV with timestamp handling
-4. **Rich Slack Notifications**: Professional block formatting with buttons and file attachments
+3. **XLSX Generation**: Converts results to XLSX with timestamp handling
+4. **Rich Slack Notifications**: Professional block formatting with threaded file attachments
 
 ## ✨ Features
 
 - **🔄 Data Transfer Integration**: Automated BigQuery DTS job triggering
-- **📊 Smart CSV Reports**: Automatic timestamp conversion for JSON serialization
+- **📊 Smart XLSX Reports**: Automatic timestamp conversion for JSON serialization
+- **🧵 Threaded File Attachments**: Reports sent as threaded replies for organized conversations
 - **🎨 Rich Slack Blocks**: Professional notifications with buttons linking to Airflow logs
 - **🔧 Flexible Channels**: Support for multiple comma-separated Slack channels
 - **⚡ Error Handling**: Context-aware failure notifications with direct links to task logs
@@ -67,7 +68,7 @@ The DAG automatically deploys when you push to the main branch.
 |------|-------------|
 | `start_data_transfer` | Triggers BigQuery DTS job and waits for completion |
 | `run_latency_check` | Queries `raw_table_latency_failure_details` table |
-| `convert_to_csv` | Converts results to CSV with proper timestamp handling |
+| `convert_to_xlsx` | Converts results to XLSX with proper timestamp handling |
 | `send_notification` | Sends success/failure notifications with rich formatting |
 
 ## 📊 Data Flow
@@ -76,16 +77,17 @@ The DAG automatically deploys when you push to the main branch.
 graph LR
     A[BigQuery DTS] --> B[Transfer Complete]
     B --> C[Query Results Table]
-    C --> D[Convert to CSV]
+    C --> D[Convert to XLSX]
     D --> E[Slack Notification]
+    E --> F[Threaded File Reply]
     
-    F[Any Task Failure] --> G[Failure Notification]
+    G[Any Task Failure] --> H[Failure Notification]
 ```
 
 ## 🎯 Slack Notifications
 
 ### Success Notifications
-- **📄 CSV File**: Latency violations with rich context
+- **📄 XLSX File**: Latency violations with rich context (sent as threaded reply)
 - **✅ No Violations**: Clean success message
 - **🔗 Action Buttons**: Direct links to Airflow DAG and task logs
 
@@ -93,6 +95,34 @@ graph LR
 - **🚨 Context-Aware Messages**: Different messages for transfer, query, or conversion failures
 - **📋 Error Details**: Task-specific error information
 - **🔗 Log Access**: Direct buttons to failed task logs
+
+### Threaded File Attachments
+
+The system sends report attachments as threaded replies to keep conversations organized:
+
+```mermaid
+sequenceDiagram
+    participant DAG as Airflow DAG
+    participant Utils as Utils Module
+    participant Slack as Slack API
+    
+    DAG->>Utils: send_latency_report_to_slack()
+    Note over Utils: Process violations & build summary
+    
+    Utils->>Utils: send_slack_message_with_blocks()
+    Utils->>Slack: POST /chat.postMessage (summary blocks)
+    Slack-->>Utils: Response with message timestamp
+    Note over Utils: Store timestamp for threading
+    
+    alt violations_count > 0
+        Utils->>Utils: send_slack_file() with thread_ts
+        Utils->>Slack: POST /files.upload (with thread_ts)
+        Note over Slack: File appears as threaded reply
+        Slack-->>Utils: File upload response
+    end
+    
+    Utils-->>DAG: Complete with both results
+```
 
 ### Block Templates
 - `latency_report_success`: For violations found
@@ -165,6 +195,7 @@ apache-airflow==2.7.0
 apache-airflow-providers-google==10.10.0
 apache-airflow-providers-slack==7.3.0
 pandas==2.0.3
+openpyxl==3.1.2
 jinja2==3.1.2
 google-cloud-bigquery-datatransfer==3.11.0
 ```
