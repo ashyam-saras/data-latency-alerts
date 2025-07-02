@@ -62,7 +62,7 @@ The DAG automatically deploys when you push to the main branch.
 
 ## 📋 DAG Workflow
 
-**Schedule**: Twice daily at 6 AM and 6 PM IST
+**Schedule**: Every 6 hours starting at 12 PM IST (12 PM, 6 PM, 12 AM, 6 AM)
 
 | Task | Description |
 |------|-------------|

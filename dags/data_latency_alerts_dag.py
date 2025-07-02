@@ -7,7 +7,7 @@ This DAG orchestrates data latency monitoring by:
 3. Converting results to CSV format
 4. Sending appropriate Slack notifications (success or failure)
 
-The DAG is scheduled to run twice daily at 6 AM and 6 PM IST.
+The DAG is scheduled to run every 6 hours starting at 12 PM IST (12 PM, 6 PM, 12 AM, 6 AM).
 
 FEATURES:
 - BigQuery Data Transfer Service integration
@@ -75,7 +75,7 @@ SLACK_CHANNELS = [channel.strip() for channel in SLACK_CHANNELS_STR.split(",")]
 
 # DAG Configuration
 DAG_ID = "data_latency_alerts"
-SCHEDULE_INTERVAL = "0 6,18 * * *"  # 6 AM and 6 PM daily (IST: 0:30 and 12:30 UTC)
+SCHEDULE_INTERVAL = "30 0,6,12,18 * * *"  # Every 6 hours starting at 12 PM IST (6:30, 12:30, 18:30, 00:30 UTC)
 DEFAULT_ARGS = {
     "owner": "data-engineering",
     "depends_on_past": False,
@@ -165,7 +165,7 @@ def send_notification(**context):
         elif "latency" in failed_task_id.lower():
             error_message = f"Latency check failed in task '{failed_task_id}'"
         elif "convert" in failed_task_id.lower():
-            error_message = f"CSV conversion failed in task '{failed_task_id}'"
+            error_message = f"XLSX conversion failed in task '{failed_task_id}'"
 
         # Find the actual failed task instance
         failed_task_instance = None
