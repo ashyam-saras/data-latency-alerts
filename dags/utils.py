@@ -249,6 +249,7 @@ def send_slack_file(
     initial_comment: str = "",
     filetype: str = "csv",
     slack_conn_id: str = "slack_default",
+    thread_ts: Union[str, Dict[str, str], None] = None,
 ) -> Dict[str, Any]:
     """
     Send a file to Slack channel(s).
@@ -260,6 +261,10 @@ def send_slack_file(
         initial_comment: Comment to include with the file
         filetype: Type of file (csv, txt, xlsx, etc.)
         slack_conn_id: Airflow Slack connection ID
+        thread_ts: Optional message timestamp to reply in thread. Can be:
+                   - String: timestamp for all channels
+                   - Dict: {channel: timestamp} mapping
+                   - None: send as regular message (not threaded)
 
     Returns:
         Dictionary with send results
@@ -277,6 +282,19 @@ def send_slack_file(
     for channel in channels:
         logging.info(f"Sending to channel: {channel}")
 
+        # Determine thread timestamp for this channel
+        channel_thread_ts = None
+        if thread_ts:
+            if isinstance(thread_ts, str):
+                # Single timestamp for all channels
+                channel_thread_ts = thread_ts
+            elif isinstance(thread_ts, dict):
+                # Channel-specific timestamp mapping
+                channel_thread_ts = thread_ts.get(channel)
+
+        if channel_thread_ts:
+            logging.info(f"Sending file as threaded reply to message {channel_thread_ts}")
+
         # Use different approach for binary vs text files
         if isinstance(file_content, bytes):
             # Binary file upload (XLSX, etc.) - use SlackHook client directly
@@ -290,6 +308,7 @@ def send_slack_file(
                     filename=filename,
                     initial_comment=initial_comment,
                     filetype=filetype,
+                    thread_ts=channel_thread_ts,  # Add thread support
                 )
             except Exception as e:
                 logging.error(f"❌ Failed to upload binary file using client method: {e}")
@@ -297,27 +316,35 @@ def send_slack_file(
                 import base64
 
                 file_content_b64 = base64.b64encode(file_content).decode("utf-8")
-                response = slack_hook.call(
-                    api_method="files.upload",
-                    data={
-                        "channels": channel,
-                        "content": file_content_b64,
-                        "filename": filename,
-                        "initial_comment": initial_comment,
-                        "filetype": filetype,
-                    },
-                )
-        else:
-            # Text file upload (CSV, TXT, etc.)
-            response = slack_hook.call(
-                api_method="files.upload",
-                data={
+                upload_data = {
                     "channels": channel,
-                    "content": file_content,
+                    "content": file_content_b64,
                     "filename": filename,
                     "initial_comment": initial_comment,
                     "filetype": filetype,
-                },
+                }
+                if channel_thread_ts:
+                    upload_data["thread_ts"] = channel_thread_ts
+
+                response = slack_hook.call(
+                    api_method="files.upload",
+                    data=upload_data,
+                )
+        else:
+            # Text file upload (CSV, TXT, etc.)
+            upload_data = {
+                "channels": channel,
+                "content": file_content,
+                "filename": filename,
+                "initial_comment": initial_comment,
+                "filetype": filetype,
+            }
+            if channel_thread_ts:
+                upload_data["thread_ts"] = channel_thread_ts
+
+            response = slack_hook.call(
+                api_method="files.upload",
+                data=upload_data,
             )
 
         if response.get("ok"):
@@ -346,7 +373,7 @@ def send_slack_message_with_blocks(
         slack_conn_id: Airflow Slack connection ID
 
     Returns:
-        Dictionary with send results
+        Dictionary with send results including message timestamps for each channel
     """
     # Ensure channels is a list
     if isinstance(channels, str):
@@ -369,7 +396,9 @@ def send_slack_message_with_blocks(
 
         if response.get("ok"):
             logging.info(f"✅ Blocks message sent to {channel} successfully")
-            results.append({"channel": channel, "status": "success"})
+            # Include the message timestamp for threading
+            message_ts = response.get("ts")
+            results.append({"channel": channel, "status": "success", "ts": message_ts, "response": response})
         else:
             logging.error(f"❌ Failed to send blocks message to {channel}: {response}")
             results.append({"channel": channel, "status": "error", "error": response})
@@ -457,18 +486,39 @@ def send_latency_report_to_slack(
             slack_conn_id=slack_conn_id,
         )
 
-        # If there are violations, also send the XLSX file with minimal comment
+        # If there are violations, also send the XLSX file as threaded reply
         if violations_count > 0:
-            filename = f"data_latency_report_{execution_date}.xlsx"
-            file_result = send_slack_file(
-                channels=channels,
-                file_content=xlsx_content,
-                filename=filename,
-                initial_comment="",  # No comment needed
-                filetype="xlsx",
-                slack_conn_id=slack_conn_id,
-            )
-            return {"blocks_result": blocks_result, "file_result": file_result}
+            # Create a mapping of channel to message timestamp for threading
+            thread_timestamps = {}
+            for result in blocks_result.get("results", []):
+                if result.get("status") == "success" and result.get("ts"):
+                    thread_timestamps[result["channel"]] = result["ts"]
+
+            if thread_timestamps:
+                logging.info(f"📎 Sending file as threaded replies using timestamps: {thread_timestamps}")
+                filename = f"data_latency_report_{execution_date}.xlsx"
+                file_result = send_slack_file(
+                    channels=channels,
+                    file_content=xlsx_content,
+                    filename=filename,
+                    initial_comment="",  # No comment needed
+                    filetype="xlsx",
+                    slack_conn_id=slack_conn_id,
+                    thread_ts=thread_timestamps,  # Send as threaded replies
+                )
+                return {"blocks_result": blocks_result, "file_result": file_result}
+            else:
+                logging.warning("⚠️ No message timestamps found, sending file as regular message")
+                filename = f"data_latency_report_{execution_date}.xlsx"
+                file_result = send_slack_file(
+                    channels=channels,
+                    file_content=xlsx_content,
+                    filename=filename,
+                    initial_comment="",  # No comment needed
+                    filetype="xlsx",
+                    slack_conn_id=slack_conn_id,
+                )
+                return {"blocks_result": blocks_result, "file_result": file_result}
 
         return {"blocks_result": blocks_result}
 
