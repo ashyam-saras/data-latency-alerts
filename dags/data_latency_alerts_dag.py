@@ -7,7 +7,7 @@ This DAG orchestrates data latency monitoring by:
 3. Converting results to CSV format
 4. Sending appropriate Slack notifications (success or failure)
 
-The DAG is scheduled to run three times daily at 6 AM, 12 PM, and 6 PM IST.
+The DAG is scheduled to run once daily at 11:30 AM IST.
 
 FEATURES:
 - BigQuery Data Transfer Service integration
@@ -75,7 +75,7 @@ SLACK_CHANNELS = [channel.strip() for channel in SLACK_CHANNELS_STR.split(",")]
 
 # DAG Configuration
 DAG_ID = "data_latency_alerts"
-SCHEDULE_INTERVAL = "30 0,6,12 * * *"  # 6 AM, 12 PM, and 6 PM IST (0:30, 6:30, 12:30 UTC)
+SCHEDULE_INTERVAL = "0 6 * * *"  # 11:30 AM IST (6:00 UTC)
 DEFAULT_ARGS = {
     "owner": "data-engineering",
     "depends_on_past": False,
