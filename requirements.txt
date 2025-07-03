@@ -1,0 +1,14 @@
+# Core Airflow
+apache-airflow>=2.5.0,<3.0.0
+
+# Airflow Providers
+apache-airflow-providers-google>=10.0.0
+apache-airflow-providers-slack>=7.0.0
+
+# Data Processing
+pandas>=1.5.0
+openpyxl==3.1.2
+
+# Optional: Additional commonly used packages for data pipelines
+google-cloud-bigquery>=3.0.0
+slack-sdk>=3.20.0
