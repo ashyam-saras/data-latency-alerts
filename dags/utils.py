@@ -170,10 +170,10 @@ def calculate_dataset_summary(results: List[Dict[str, Any]]) -> Tuple[str, Dict[
     if not results:
         return "✅ No latency violations found - all tables are up to date!", {}
 
-    # Count violations by dataset (TABLE_SCHEMA)
+    # Count violations by dataset (table_schema)
     dataset_counts = {}
     for record in results:
-        dataset = record.get("TABLE_SCHEMA", "Unknown")
+        dataset = record.get("table_schema", "Unknown")
         dataset_counts[dataset] = dataset_counts.get(dataset, 0) + 1
 
     # Create summary text
