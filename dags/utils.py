@@ -302,7 +302,7 @@ def send_slack_file(
 
             try:
                 # Use the Slack client directly for binary file uploads
-                response = slack_hook.client.files_upload(
+                response = slack_hook.client.files_upload_v2(
                     channels=channel,
                     file=io.BytesIO(file_content),
                     filename=filename,
