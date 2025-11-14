@@ -26,12 +26,13 @@ AIRFLOW VARIABLES:
 - LATENCY_ALERTS__PROJECT_NAME: GCP project name (default: insightsprod)
 - LATENCY_ALERTS__AUDIT_DATASET_NAME: Metadata dataset name (default: edm_insights_metadata)
 - LATENCY_ALERTS__BIGQUERY_LOCATION: BigQuery location (default: us-central1)
-- LATENCY_ALERTS__SLACK_CHANNELS: Comma-separated Slack channels (default: #slack-bot-test)
+- LATENCY_ALERTS__SLACK_CHANNELS: Supports both json and comma-separated Slack channels (default: #slack-bot-test)
 - LATENCY_ALERTS__AIRFLOW_BASE_URL: Optional base URL for Airflow web UI (for DAG links, auto-detected for task logs)
 - LATENCY_ALERTS__BQ_DTS_CONFIG_ID: BigQuery DTS transfer configuration ID (must be in us-central1)
 """
 
 import base64
+import json
 import logging
 
 # Import our utility functions
@@ -56,6 +57,7 @@ from utils import (
     execute_bigquery_latency_check,
     send_failure_notification,
     send_latency_report_to_slack,
+    resolve_channels_for_results,
 )
 
 # Configuration from Airflow Variables
@@ -69,9 +71,16 @@ BIGQUERY_CONN_ID = "data_latency_alerts__conn_id"
 
 # Slack configuration from Airflow Variables
 SLACK_CONN_ID = "slack_default"
-SLACK_CHANNELS_STR = Variable.get("LATENCY_ALERTS__SLACK_CHANNELS", "#slack-bot-test")
-# Split comma-separated channels and strip whitespace
-SLACK_CHANNELS = [channel.strip() for channel in SLACK_CHANNELS_STR.split(",")]
+
+# JSON-based Slack configuration
+try:
+    SLACK_CHANNEL_MAPPING = json.loads(
+        Variable.get("LATENCY_ALERTS__SLACK_CHANNELS", '{"default": "#slack-bot-test"}')
+    )
+    logging.info(f"📢 Loaded Slack channel mapping: {SLACK_CHANNEL_MAPPING}")
+except Exception as e:
+    logging.error(f"⚠️ Failed to parse LATENCY_ALERTS__SLACK_CHANNELS as JSON: {e}")
+    SLACK_CHANNEL_MAPPING = {"default": "#slack-bot-test"}
 
 # DAG Configuration
 DAG_ID = "data_latency_alerts"
@@ -120,7 +129,7 @@ def convert_to_xlsx(**context):
     """
     # Get results from the latency check task via XCom
     task_instance = context["task_instance"]
-    results = task_instance.xcom_pull(task_ids="run_latency_check")
+    results = task_instance.xcom_pull(task_ids="run_latency_check") or []
 
     # Convert to XLSX
     xlsx_content = convert_results_to_xlsx(results)
@@ -177,7 +186,7 @@ def send_notification(**context):
 
         send_failure_notification(
             error_message=error_message,
-            channels=SLACK_CHANNELS,
+            channels=[SLACK_CHANNEL_MAPPING.get("default", "#slack-bot-test")],
             dag_id=DAG_ID,
             execution_date=execution_date,
             failed_task_id=failed_task_id,
@@ -192,7 +201,7 @@ def send_notification(**context):
         # All tasks succeeded, send success report
         convert_data = task_instance.xcom_pull(task_ids="convert_to_xlsx")
         xlsx_content_b64 = convert_data["xlsx_content_b64"]
-        results = convert_data["results"]
+        results = convert_data["results"] or []
 
         # Decode base64 string back to bytes
         xlsx_content = base64.b64decode(xlsx_content_b64)
@@ -200,7 +209,7 @@ def send_notification(**context):
         send_latency_report_to_slack(
             xlsx_content=xlsx_content,
             results=results,
-            channels=SLACK_CHANNELS,
+            channels=resolve_channels_for_results(results, SLACK_CHANNEL_MAPPING),
             execution_date=execution_date,
             dag_id=DAG_ID,
             task_instance=task_instance,

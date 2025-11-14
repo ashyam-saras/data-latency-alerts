@@ -20,6 +20,43 @@ from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 from airflow.providers.slack.hooks.slack import SlackHook
 from jinja2 import Template
 
+def resolve_channels_for_results(results: list, channel_mapping: dict) -> list:
+    """
+    Determine Slack channels based on dataset name patterns.
+    
+    """
+    if not channel_mapping:
+        return ["#slack-bot-test"]
+
+    default_channel = channel_mapping.get("default", "#slack-bot-test")
+
+    if not results:
+        return [default_channel]
+
+    dataset_names = [r.get("table_schema", "").lower() for r in results if r.get("table_schema")]
+    matched_channels = []
+
+    for dataset in dataset_names:
+        selected_channel = None
+        longest_pattern = 0
+        for pattern, channel in channel_mapping.items():
+            if pattern == "default":
+                continue
+            if pattern.lower() in dataset and len(pattern) > longest_pattern:
+                selected_channel = channel
+                longest_pattern = len(pattern)
+        matched_channels.append(selected_channel or default_channel)
+
+    # Deduplicate while preserving order
+    final_channels = []
+    for ch in matched_channels:
+        if ch not in final_channels:
+            final_channels.append(ch)
+
+    logging.info(f"📢 Routing results to Slack channels: {final_channels}")
+    return final_channels
+
+
 
 def load_slack_blocks() -> Dict[str, Any]:
     """
@@ -409,7 +446,7 @@ def send_slack_message_with_blocks(
 def send_latency_report_to_slack(
     xlsx_content: bytes,
     results: List[Dict[str, Any]],
-    channels: Union[str, List[str]],
+    channels: Union[str, List[str], dict],
     execution_date: str,
     dag_id: str = "data_latency_alerts",
     task_instance=None,
@@ -537,7 +574,7 @@ def send_latency_report_to_slack(
 
 def send_failure_notification(
     error_message: str,
-    channels: Union[str, List[str]],
+    channels: Union[str, List[str],dict],
     dag_id: str,
     execution_date: str,
     failed_task_id: str = None,
