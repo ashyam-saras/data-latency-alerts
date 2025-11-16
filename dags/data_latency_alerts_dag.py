@@ -69,7 +69,7 @@ BIGQUERY_CONN_ID = "data_latency_alerts__conn_id"
 
 # Slack configuration from Airflow Variables
 SLACK_CONN_ID = "slack_default"
-SLACK_CHANNELS_STR = Variable.get("LATENCY_ALERTS__SLACK_CHANNELS", "#slack-bot-test")
+SLACK_CHANNELS_STR = Variable.get("LATENCY_ALERTS__SLACK_CHANNELS", "C065MG2L63U")
 # Split comma-separated channels and strip whitespace
 SLACK_CHANNELS = [channel.strip() for channel in SLACK_CHANNELS_STR.split(",")]
 
