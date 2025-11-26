@@ -6,6 +6,8 @@ This DAG orchestrates data latency monitoring by:
 2. Executing simple latency check query on processed data
 3. Converting results to XLSX format
 4. Sending appropriate Slack notifications (success or failure) with client-specific routing
+3. Converting results to XLSX format
+4. Sending appropriate Slack notifications (success or failure) with client-specific routing
 
 The DAG is scheduled to run once daily at 11:30 AM IST.
 
