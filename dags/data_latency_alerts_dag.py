@@ -4,8 +4,8 @@ Data Latency Alerts DAG
 This DAG orchestrates data latency monitoring by:
 1. Triggering BigQuery Data Transfer Service job (waits for completion)
 2. Executing simple latency check query on processed data
-3. Converting results to CSV format
-4. Sending appropriate Slack notifications (success or failure)
+3. Converting results to XLSX format
+4. Sending appropriate Slack notifications (success or failure) with client-specific routing
 
 The DAG is scheduled to run once daily at 11:30 AM IST.
 
@@ -15,6 +15,7 @@ FEATURES:
 - Direct links to Airflow logs for failed tasks
 - Single notification task handling both success and failure cases
 - Automatic violation counting and smart templates
+- Client-specific Slack channel routing based on dataset patterns (regex matching)
 
 REQUIREMENTS:
 - BigQuery Data Transfer Service permissions
@@ -26,7 +27,7 @@ AIRFLOW VARIABLES:
 - LATENCY_ALERTS__PROJECT_NAME: GCP project name (default: insightsprod)
 - LATENCY_ALERTS__AUDIT_DATASET_NAME: Metadata dataset name (default: edm_insights_metadata)
 - LATENCY_ALERTS__BIGQUERY_LOCATION: BigQuery location (default: us-central1)
-- LATENCY_ALERTS__SLACK_CHANNELS: Supports both json and comma-separated Slack channels (default: #slack-bot-test)
+- LATENCY_ALERTS__SLACK_CHANNELS: Slack channel configuration (supports both JSON and comma-separated formats):
 - LATENCY_ALERTS__AIRFLOW_BASE_URL: Optional base URL for Airflow web UI (for DAG links, auto-detected for task logs)
 - LATENCY_ALERTS__BQ_DTS_CONFIG_ID: BigQuery DTS transfer configuration ID (must be in us-central1)
 """
@@ -58,6 +59,8 @@ from utils import (
     send_failure_notification,
     send_latency_report_to_slack,
     resolve_channels_for_results,
+    parse_slack_channels_config,
+    get_failure_channels,
 )
 
 # Configuration from Airflow Variables
@@ -72,15 +75,21 @@ BIGQUERY_CONN_ID = "data_latency_alerts__conn_id"
 # Slack configuration from Airflow Variables
 SLACK_CONN_ID = "slack_default"
 
-# JSON-based Slack configuration
-try:
-    SLACK_CHANNEL_MAPPING = json.loads(
-        Variable.get("LATENCY_ALERTS__SLACK_CHANNELS", '{"default": "#slack-bot-test"}')
+# Parse Slack channels configuration (supports both JSON and comma-separated formats)
+# Raises ValueError if configuration is invalid - this prevents DAG from loading with bad config
+SLACK_CHANNELS_STR = Variable.get("LATENCY_ALERTS__SLACK_CHANNELS")
+SLACK_CHANNEL_CONFIG = parse_slack_channels_config(SLACK_CHANNELS_STR)
+# Backward compatibility: maintain SLACK_CHANNELS list for legacy code
+SLACK_CHANNELS = SLACK_CHANNEL_CONFIG.get("channels", [SLACK_CHANNEL_CONFIG.get("default", "C065MG2L63U")])
+
+logging.info(f"✅ Slack channel configuration loaded successfully")
+if SLACK_CHANNEL_CONFIG.get("is_legacy"):
+    logging.info(f"📝 Using legacy comma-separated format with {len(SLACK_CHANNELS)} channel(s)")
+else:
+    logging.info(
+        f"📝 Using JSON format with {len(SLACK_CHANNEL_CONFIG.get('patterns', {}))} pattern(s) "
+        f"and {len(SLACK_CHANNELS)} default channel(s)"
     )
-    logging.info(f"📢 Loaded Slack channel mapping: {SLACK_CHANNEL_MAPPING}")
-except Exception as e:
-    logging.error(f"⚠️ Failed to parse LATENCY_ALERTS__SLACK_CHANNELS as JSON: {e}")
-    SLACK_CHANNEL_MAPPING = {"default": "#slack-bot-test"}
 
 # DAG Configuration
 DAG_ID = "data_latency_alerts"
@@ -95,7 +104,6 @@ DEFAULT_ARGS = {
     "retry_delay": timedelta(minutes=0),
     "catchup": False,
 }
-
 
 def run_latency_check(**context):
     """
@@ -184,9 +192,12 @@ def send_notification(**context):
                     failed_task_instance = ti
                     break
 
+        # Use failure channels (always defaults, regardless of pattern matching)
+        failure_channels = get_failure_channels(SLACK_CHANNEL_CONFIG, SLACK_CHANNELS)
+        
         send_failure_notification(
             error_message=error_message,
-            channels=[SLACK_CHANNEL_MAPPING.get("default", "#slack-bot-test")],
+            channels=failure_channels,
             dag_id=DAG_ID,
             execution_date=execution_date,
             failed_task_id=failed_task_id,
@@ -206,10 +217,17 @@ def send_notification(**context):
         # Decode base64 string back to bytes
         xlsx_content = base64.b64decode(xlsx_content_b64)
 
+        # Resolve channels based on dataset patterns in results
+        success_channels = resolve_channels_for_results(
+            results=results,
+            channel_config=SLACK_CHANNEL_CONFIG,
+            fallback_channels=SLACK_CHANNELS,
+        )
+
         send_latency_report_to_slack(
             xlsx_content=xlsx_content,
             results=results,
-            channels=resolve_channels_for_results(results, SLACK_CHANNEL_MAPPING),
+            channels=success_channels,
             execution_date=execution_date,
             dag_id=DAG_ID,
             task_instance=task_instance,

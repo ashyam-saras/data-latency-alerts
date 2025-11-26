@@ -11,7 +11,8 @@ import io
 import json
 import logging
 import os
-from typing import Any, Dict, List, Tuple, Union
+import re
+from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import quote
 
 import pandas as pd
@@ -20,41 +21,248 @@ from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 from airflow.providers.slack.hooks.slack import SlackHook
 from jinja2 import Template
 
-def resolve_channels_for_results(results: list, channel_mapping: dict) -> list:
-    """
-    Determine Slack channels based on dataset name patterns.
-    
-    """
-    if not channel_mapping:
-        return ["#slack-bot-test"]
+# Slack routing edge cases (documented per requirements):
+# - Duplicate regex patterns
+# - Overlapping patterns
+# - Dataset present in multiple patterns
+# - Missing default channel mapping
+# - Patterns with empty channel values
+# - Patterns that match empty strings
+# - JSON values that are null or not strings
+# - Trailing commas or malformed JSON
 
-    default_channel = channel_mapping.get("default", "#slack-bot-test")
+
+def _normalize_channel_value(raw_value: Any, *, context: str) -> List[str]:
+    """
+    Convert a channel value into a list of channel strings.
+    """
+    if raw_value is None:
+        raise ValueError(f"Channel value for {context} cannot be null")
+    if not isinstance(raw_value, str):
+        raise ValueError(
+            f"Channel value for {context} must be a string, got {type(raw_value).__name__}"
+        )
+
+    channels = [channel.strip() for channel in raw_value.split(",") if channel.strip()]
+    if not channels:
+        raise ValueError(f"No valid Slack channels found for {context}")
+    return channels
+
+
+def _deduplicate_preserve_order(items: List[str]) -> List[str]:
+    """
+    Remove duplicates from a list while preserving order.
+    """
+    seen = set()
+    deduped = []
+    for item in items:
+        if item not in seen:
+            deduped.append(item)
+            seen.add(item)
+    return deduped
+
+
+def _extract_dataset_identifier(record: Dict[str, Any]) -> Optional[str]:
+    """
+    Extract a dataset identifier from a result record.
+    """
+    candidate_keys = ("dataset_id", "dataset", "dataset_name", "table_schema")
+    for key in candidate_keys:
+        value = record.get(key)
+        if value is not None:
+            return str(value)
+    return None
+
+def parse_slack_channels_config(config_str: str) -> Dict[str, Any]:
+    """
+    Parse Slack channels configuration from Airflow Variable.
+
+    Expected format (JSON string):
+    {
+      "3461": "#clientA-alerts",
+      "4321|3476": "#clientAB-alerts",
+      "default": "#data-alerts,#monitoring"
+    }
+
+    Rules:
+        - JSON must be a dictionary
+        - A "default" key is mandatory and must contain at least one channel
+        - Each non-default key is treated as a regex pattern mapped to comma-separated channels
+
+    Returns:
+        dict with the following keys:
+            - default: primary default channel (first in list)
+            - channels: list of default channels
+            - default_channels: alias for channels (explicit naming)
+            - patterns: {pattern: [channels]}
+            - pattern_entries: [{"pattern": str, "regex": Pattern, "channels": [str]}]
+            - is_legacy: always False (maintains backwards-compatible flag)
+
+    Raises:
+        ValueError: for malformed or incomplete configurations
+    """
+    if not config_str or not config_str.strip():
+        raise ValueError("Slack channels configuration cannot be empty. Please provide a valid configuration.")
+
+    try:
+        config_json = json.loads(config_str.strip())
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"LATENCY_ALERTS__SLACK_CHANNELS must contain valid JSON: {exc.msg} (pos {exc.pos})"
+        ) from exc
+
+    if not isinstance(config_json, dict):
+        raise ValueError(
+            f"Slack channel configuration must be a JSON object, got {type(config_json).__name__}"
+        )
+
+    if "default" not in config_json:
+        raise ValueError("Slack channel configuration must include a 'default' key with channel(s).")
+
+    default_channels = _normalize_channel_value(config_json["default"], context="'default'")
+    primary_default = default_channels[0]
+
+    pattern_entries: List[Dict[str, Any]] = []
+    pattern_map: Dict[str, List[str]] = {}
+
+    for key, value in config_json.items():
+        if key == "default":
+            continue
+
+        pattern_str = str(key).strip()
+        if not pattern_str:
+            raise ValueError("Pattern keys cannot be empty strings.")
+
+        channels = _normalize_channel_value(value, context=f"pattern '{pattern_str}'")
+
+        try:
+            compiled_regex = re.compile(pattern_str)
+        except re.error as exc:
+            raise ValueError(f"Invalid regex pattern '{pattern_str}': {exc}") from exc
+
+        pattern_entries.append(
+            {"pattern": pattern_str, "regex": compiled_regex, "channels": channels}
+        )
+        pattern_map[pattern_str] = channels
+
+    logging.info(
+        "Parsed Slack channel mapping with %d pattern(s) and %d default channel(s).",
+        len(pattern_entries),
+        len(default_channels),
+    )
+
+    return {
+        "default": primary_default,
+        "channels": default_channels,
+        "default_channels": default_channels,
+        "patterns": pattern_map,
+        "pattern_entries": pattern_entries,
+        "is_legacy": False,
+    }
+def resolve_channels_for_results(
+    results: List[Dict[str, Any]],
+    channel_config: Dict[str, Any],
+    fallback_channels: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Resolve dataset-specific routing rules.
+
+    Args:
+        results: List of BigQuery result rows.
+        channel_config: Output of parse_slack_channels_config.
+        fallback_channels: Optional static fallback (legacy compatibility).
+
+    Returns:
+        List of routing entries, each containing:
+            {
+                "channels": [list of Slack channels],
+                "results": [records scoped to those channels]
+            }
+    """
+    if not isinstance(channel_config, dict):
+        if fallback_channels:
+            return [{"channels": fallback_channels, "results": results}]
+        raise ValueError("Channel configuration must be a dictionary.")
+
+    default_channels = (
+        channel_config.get("default_channels")
+        or channel_config.get("channels")
+        or fallback_channels
+    )
+    if not default_channels:
+        raise ValueError("Slack channel configuration must define default channels.")
+
+    pattern_entries: List[Dict[str, Any]] = channel_config.get("pattern_entries", [])
 
     if not results:
-        return [default_channel]
+        return [{"channels": default_channels, "results": []}]
 
-    dataset_names = [r.get("table_schema", "").lower() for r in results if r.get("table_schema")]
-    matched_channels = []
+    channel_routes: Dict[Tuple[str, ...], List[Dict[str, Any]]] = {}
 
-    for dataset in dataset_names:
-        selected_channel = None
-        longest_pattern = 0
-        for pattern, channel in channel_mapping.items():
-            if pattern == "default":
-                continue
-            if pattern.lower() in dataset and len(pattern) > longest_pattern:
-                selected_channel = channel
-                longest_pattern = len(pattern)
-        matched_channels.append(selected_channel or default_channel)
+    for record in results:
+        dataset_identifier = _extract_dataset_identifier(record)
 
-    # Deduplicate while preserving order
-    final_channels = []
-    for ch in matched_channels:
-        if ch not in final_channels:
-            final_channels.append(ch)
+        matched_channels: List[str] = []
+        if dataset_identifier:
+            for entry in pattern_entries:
+                if entry["regex"].search(dataset_identifier):
+                    matched_channels.extend(entry["channels"])
 
-    logging.info(f"📢 Routing results to Slack channels: {final_channels}")
-    return final_channels
+        if not matched_channels:
+            matched_channels = list(default_channels)
+
+        matched_channels = _deduplicate_preserve_order(matched_channels)
+        route_key = tuple(matched_channels)
+        channel_routes.setdefault(route_key, []).append(record)
+
+    routes = [{"channels": list(channels), "results": routed_results} for channels, routed_results in channel_routes.items()]
+
+    if not routes:
+        routes.append({"channels": list(default_channels), "results": []})
+
+    logging.info("Prepared %d Slack routing bundle(s).", len(routes))
+    return routes
+
+
+def get_failure_channels(
+    channel_config: Dict[str, Any],
+    fallback_channels: Optional[List[str]] = None
+) -> List[str]:
+    """
+    Get channels for failure notifications.
+    
+    For failures, we always use the default channel(s) as they indicate
+    system-level issues rather than dataset-specific problems.
+    
+    Includes error handling with fallback to ensure critical failure alerts are never lost.
+    
+    Args:
+        channel_config: Parsed channel configuration dictionary
+        fallback_channels: Optional fallback channels if configuration is invalid
+        
+    Returns:
+        List of Slack channel IDs for failure notifications
+        
+    Risk Mitigation:
+        - Always returns at least one channel (fallback if needed)
+        - Handles configuration errors gracefully
+    """
+    if not channel_config or not isinstance(channel_config, dict):
+        logging.warning("⚠️ Invalid channel configuration for failure notification, using fallback")
+        return fallback_channels or ["C065MG2L63U"]
+
+    channels = (
+        channel_config.get("default_channels")
+        or channel_config.get("channels")
+        or ([channel_config.get("default")] if channel_config.get("default") else None)
+    )
+
+    if not channels:
+        logging.warning("⚠️ No default channels found, using fallback for failures")
+        return fallback_channels or ["C065MG2L63U"]
+
+    logging.info("📢 Using failure notification channel(s): %s", channels)
+    return channels
 
 
 
@@ -339,7 +547,7 @@ def send_slack_file(
 
             try:
                 # Use the Slack client directly for binary file uploads
-                response = slack_hook.client.files_upload(
+                response = slack_hook.client.files_upload_v2(
                     channels=channel,
                     file=io.BytesIO(file_content),
                     filename=filename,
@@ -446,7 +654,7 @@ def send_slack_message_with_blocks(
 def send_latency_report_to_slack(
     xlsx_content: bytes,
     results: List[Dict[str, Any]],
-    channels: Union[str, List[str], dict],
+    channels: Union[str, List[str], dict, List[Dict[str, Any]]],
     execution_date: str,
     dag_id: str = "data_latency_alerts",
     task_instance=None,
@@ -467,109 +675,115 @@ def send_latency_report_to_slack(
     Returns:
         Dictionary with send results
     """
-    # Load Slack block templates
     block_templates = load_slack_blocks()
-
-    # Calculate dataset summary
-    summary_text, dataset_counts = calculate_dataset_summary(results)
-    violations_count = len(results)
-
-    # Build Airflow URLs
     urls = build_airflow_urls(task_instance=task_instance, dag_id=dag_id)
 
-    # Choose appropriate block template
-    if violations_count > 0:
-        template_key = "latency_report_success"
-    else:
-        template_key = "latency_report_no_violations"
+    def _send_to_channels(
+        target_channels: Union[str, List[str]],
+        target_results: List[Dict[str, Any]],
+        xlsx_override: Optional[bytes],
+    ) -> Dict[str, Any]:
+        summary_text, _ = calculate_dataset_summary(target_results)
+        violations_count = len(target_results)
+        template_key = "latency_report_success" if violations_count > 0 else "latency_report_no_violations"
 
-    # Get the block template
-    if template_key in block_templates:
+        if template_key not in block_templates:
+            logging.warning("Block template '%s' not found, sending fallback text.", template_key)
+            simple_message = f"Data Latency Check Results - {execution_date}: {violations_count} violations found"
+            return send_slack_message_with_blocks(
+                channels=target_channels,
+                blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": simple_message}}],
+                fallback_text=simple_message,
+                slack_conn_id=slack_conn_id,
+            )
+
         blocks = block_templates[template_key]["blocks"]
-
-        # Convert blocks to string for placeholder replacement
         blocks_str = json.dumps(blocks)
 
-        # Replace placeholders with raw values (not JSON-encoded)
-        # This avoids double-encoding issues since we're inserting into JSON strings
         replacements = {
             "{execution_date}": execution_date,
             "{dag_id}": dag_id,
             "{violations_count}": str(violations_count),
-            "{summary_text}": summary_text.replace('"', '\\"').replace("\n", "\\n"),  # Escape for JSON
+            "{summary_text}": summary_text.replace('"', '\\"').replace("\n", "\\n"),
         }
-        # URLs need escaping too
-        for k, v in urls.items():
-            replacements[f"{{{k}}}"] = v.replace('"', '\\"') if v else ""
+        for key, value in urls.items():
+            replacements[f"{{{key}}}"] = value.replace('"', '\\"') if value else ""
 
         for placeholder, value in replacements.items():
             blocks_str = blocks_str.replace(placeholder, value)
 
-        # Parse back to blocks object
         try:
             formatted_blocks = json.loads(blocks_str)
-        except json.JSONDecodeError as e:
-            logging.error(f"❌ JSON parsing failed at position {e.pos}")
-            logging.error(f"❌ Error: {e.msg}")
-            logging.error(f"❌ Context around error: {blocks_str[max(0, e.pos-50):e.pos+50]}")
-            logging.error(f"❌ Full blocks_str: {blocks_str}")
+        except json.JSONDecodeError as exc:
+            logging.error("❌ JSON parsing failed at position %s (%s)", exc.pos, exc.msg)
             raise
 
-        # Send the beautiful blocks message first
         blocks_result = send_slack_message_with_blocks(
-            channels=channels,
+            channels=target_channels,
             blocks=formatted_blocks,
             fallback_text=f"Data Latency Check Results - {execution_date}",
             slack_conn_id=slack_conn_id,
         )
 
-        # If there are violations, also send the XLSX file as threaded reply
-        if violations_count > 0:
-            # Create a mapping of channel to message timestamp for threading
-            thread_timestamps = {}
-            for result in blocks_result.get("results", []):
-                if result.get("status") == "success" and result.get("ts"):
-                    thread_timestamps[result["channel"]] = result["ts"]
+        if violations_count == 0:
+            return {"blocks_result": blocks_result}
 
-            if thread_timestamps:
-                logging.info(f"📎 Sending file as threaded replies using timestamps: {thread_timestamps}")
-                filename = f"data_latency_report_{execution_date}.xlsx"
-                file_result = send_slack_file(
-                    channels=channels,
-                    file_content=xlsx_content,
-                    filename=filename,
-                    initial_comment="",  # No comment needed
-                    filetype="xlsx",
-                    slack_conn_id=slack_conn_id,
-                    thread_ts=thread_timestamps,  # Send as threaded replies
-                )
-                return {"blocks_result": blocks_result, "file_result": file_result}
-            else:
-                logging.warning("⚠️ No message timestamps found, sending file as regular message")
-                filename = f"data_latency_report_{execution_date}.xlsx"
-                file_result = send_slack_file(
-                    channels=channels,
-                    file_content=xlsx_content,
-                    filename=filename,
-                    initial_comment="",  # No comment needed
-                    filetype="xlsx",
-                    slack_conn_id=slack_conn_id,
-                )
-                return {"blocks_result": blocks_result, "file_result": file_result}
+        thread_timestamps = {
+            entry["channel"]: entry["ts"]
+            for entry in blocks_result.get("results", [])
+            if entry.get("status") == "success" and entry.get("ts")
+        }
 
-        return {"blocks_result": blocks_result}
+        if thread_timestamps:
+            logging.info("📎 Sending files as threaded replies for channels: %s", list(thread_timestamps.keys()))
 
-    else:
-        # Fallback to simple message if blocks not available
-        logging.warning(f"Block template '{template_key}' not found, using fallback message")
-        simple_message = f"Data Latency Check Results - {execution_date}: {violations_count} violations found"
-
-        return send_slack_message_with_blocks(
-            channels=channels,
-            blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": simple_message}}],
-            fallback_text=simple_message,
+        file_bytes = xlsx_override or convert_results_to_xlsx(target_results)
+        filename = f"data_latency_report_{execution_date}.xlsx"
+        file_result = send_slack_file(
+            channels=target_channels,
+            file_content=file_bytes,
+            filename=filename,
+            initial_comment="",
+            filetype="xlsx",
             slack_conn_id=slack_conn_id,
+            thread_ts=thread_timestamps if thread_timestamps else None,
         )
+        return {"blocks_result": blocks_result, "file_result": file_result}
+
+    def _looks_like_routing_payload(payload: Any) -> bool:
+        return isinstance(payload, list) and payload and all(
+            isinstance(entry, dict) and "channels" in entry for entry in payload
+        )
+
+    if _looks_like_routing_payload(channels):
+        route_payload: List[Dict[str, Any]] = channels  # type: ignore[assignment]
+        responses = []
+        for route in route_payload:
+            target_channels = route.get("channels") or []
+            if not target_channels:
+                logging.warning("Skipping route with empty channel list: %s", route)
+                continue
+            route_results = route.get("results", [])
+            responses.append(
+                {
+                    "channels": target_channels,
+                    "response": _send_to_channels(target_channels, route_results, None),
+                }
+            )
+        return {"routes": responses}
+
+    if isinstance(channels, dict):
+        responses = []
+        for channel, scoped_results in channels.items():
+            responses.append(
+                {
+                    "channels": [channel],
+                    "response": _send_to_channels([channel], scoped_results, None),
+                }
+            )
+        return {"routes": responses}
+
+    return _send_to_channels(channels, results, xlsx_content)
 
 
 def send_failure_notification(
