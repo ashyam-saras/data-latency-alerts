@@ -202,23 +202,19 @@ def resolve_channels_for_results(
     for record in results:
         dataset_identifier = _extract_dataset_identifier(record)
 
-        matched_channels: List[str] = []
-        if dataset_identifier:
-            for entry in pattern_entries:
-                if entry["regex"].search(dataset_identifier):
-                    matched_channels.extend(entry["channels"])
+        if not dataset_identifier:
+            continue
 
-        if not matched_channels:
-            matched_channels = list(default_channels)
+        for entry in pattern_entries:
+            if entry["regex"].search(dataset_identifier):
+                matched_channels = _deduplicate_preserve_order(entry["channels"])
+                route_key = tuple(matched_channels)
+                channel_routes.setdefault(route_key, []).append(record)
 
-        matched_channels = _deduplicate_preserve_order(matched_channels)
-        route_key = tuple(matched_channels)
-        channel_routes.setdefault(route_key, []).append(record)
+    routes = [{"channels": list(default_channels), "results": results}]
 
-    routes = [{"channels": list(channels), "results": routed_results} for channels, routed_results in channel_routes.items()]
-
-    if not routes:
-        routes.append({"channels": list(default_channels), "results": []})
+    for channels, routed_results in channel_routes.items():
+        routes.append({"channels": list(channels), "results": routed_results})
 
     logging.info("Prepared %d Slack routing bundle(s).", len(routes))
     return routes
