@@ -401,6 +401,9 @@ def execute_bigquery_latency_check(
 def calculate_dataset_summary(results: List[Dict[str, Any]]) -> Tuple[str, Dict[str, int]]:
     """
     Calculate summary statistics by dataset.
+    
+    Truncates summary to stay within Slack's 3000 character limit for text blocks.
+    Shows top datasets and adds "+X more datasets" if truncated.
 
     Args:
         results: List of dictionaries from BigQuery
@@ -421,19 +424,49 @@ def calculate_dataset_summary(results: List[Dict[str, Any]]) -> Tuple[str, Dict[
     total_violations = len(results)
     total_datasets = len(dataset_counts)
 
+    # Slack has a 3000 character limit per text block - use 2800 to be safe
+    MAX_CHARS = 2800
+    
     summary_lines = [f"Found {total_violations} table violations across {total_datasets} datasets:"]
+    header_text = summary_lines[0]
 
     # Sort datasets by violation count (descending)
     sorted_datasets = sorted(dataset_counts.items(), key=lambda x: x[1], reverse=True)
 
+    # Build summary line by line, checking character limit
+    datasets_shown = 0
+    current_length = len(header_text)
+    
     for dataset, count in sorted_datasets:
-        summary_lines.append(f"• *{dataset}*: {count} tables violate threshold")
+        # Truncate very long dataset names to prevent single-line overflow
+        display_dataset = dataset if len(dataset) <= 80 else f"{dataset[:77]}..."
+        line = f"• *{display_dataset}*: {count} tables violate threshold"
+        
+        # Check if adding this line would exceed the limit
+        if current_length + len(line) + 1 > MAX_CHARS:  # +1 for newline
+            break
+            
+        summary_lines.append(line)
+        datasets_shown += 1
+        current_length += len(line) + 1  # +1 for newline
+
+    # Add truncation notice if not all datasets were shown
+    remaining_datasets = total_datasets - datasets_shown
+    if remaining_datasets > 0:
+        truncation_line = f"\n_...and {remaining_datasets} more dataset{'s' if remaining_datasets > 1 else ''} (see attached file for complete list)_"
+        summary_lines.append(truncation_line)
+        logging.warning(f"⚠️ Summary truncated: showing {datasets_shown}/{total_datasets} datasets to stay within Slack character limit")
 
     summary_text = "\n".join(summary_lines)
 
     logging.info(f"📊 Dataset summary: {total_violations} violations across {total_datasets} datasets")
-    for dataset, count in sorted_datasets:
+    logging.info(f"📝 Summary length: {len(summary_text)} characters (max: {MAX_CHARS})")
+    
+    # Log first few datasets for debugging
+    for dataset, count in sorted_datasets[:5]:
         logging.info(f"  - {dataset}: {count} tables")
+    if len(sorted_datasets) > 5:
+        logging.info(f"  ... and {len(sorted_datasets) - 5} more datasets")
 
     return summary_text, dataset_counts
 
