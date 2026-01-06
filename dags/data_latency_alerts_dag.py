@@ -116,7 +116,7 @@ def run_latency_check(**context):
     """
     # Simple SQL query - no file needed
     sql_query = (
-        "SELECT * FROM `{{ params.project_name }}.{{ params.audit_dataset_name }}.raw_table_latency_failure_details_test`"
+        "SELECT * FROM `{{ params.project_name }}.{{ params.audit_dataset_name }}.raw_table_latency_failure_details`"
     )
 
     logging.info(f"🔍 Executing latency check query")
@@ -276,7 +276,7 @@ with DAG(
                 "destinationTable": {
                     "projectId": PROJECT_NAME,
                     "datasetId": AUDIT_DATASET_NAME,
-                    "tableId": "raw_table_latency_failure_details_test",
+                    "tableId": "raw_table_latency_failure_details",
                 },
             }
         },
