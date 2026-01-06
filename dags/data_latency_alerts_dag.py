@@ -45,9 +45,11 @@ from pathlib import Path
 from airflow import DAG
 from airflow.models import Variable
 from airflow.operators.python import PythonOperator
+from airflow.providers.google.cloud.operators.bigquery import BigQueryInsertJobOperator
 from airflow.providers.google.cloud.operators.bigquery_dts import BigQueryDataTransferServiceStartTransferRunsOperator
 from airflow.utils.dates import days_ago
 from airflow.utils.state import State
+from airflow.utils.trigger_rule import TriggerRule
 
 # Add the current directory to Python path to find utils module
 current_dir = Path(__file__).parent
@@ -64,7 +66,10 @@ from utils import (
 )
 
 # Configuration from Airflow Variables
-PROJECT_NAME = Variable.get("LATENCY_ALERTS__PROJECT_NAME", "insightsprod")
+# LATENCY_ALERTS__PROJECT_NAME is a JSON array of projects
+PROJECTS_ARRAY = json.loads(Variable.get("LATENCY_ALERTS__PROJECT_NAME", '["insightsprod"]'))
+# Use first project for single-project operations (BigQuery connection, dataset location, etc.)
+PROJECT_NAME = PROJECTS_ARRAY[0] if PROJECTS_ARRAY else "insightsprod"
 AUDIT_DATASET_NAME = Variable.get("LATENCY_ALERTS__AUDIT_DATASET_NAME", "edm_insights_metadata")
 LOCATION = Variable.get("LATENCY_ALERTS__BIGQUERY_LOCATION", "us-central1")
 TRANSFER_CONFIG_ID = Variable.get("LATENCY_ALERTS__BQ_DTS_CONFIG_ID")
@@ -111,7 +116,7 @@ def run_latency_check(**context):
     """
     # Simple SQL query - no file needed
     sql_query = (
-        "SELECT * FROM `{{ params.project_name }}.{{ params.audit_dataset_name }}.raw_table_latency_failure_details`"
+        "SELECT * FROM `{{ params.project_name }}.{{ params.audit_dataset_name }}.raw_table_latency_failure_details_test`"
     )
 
     logging.info(f"🔍 Executing latency check query")
@@ -259,30 +264,49 @@ with DAG(
         gcp_conn_id=BIGQUERY_CONN_ID,
     )
 
-    # Task 2: Run latency check on processed data
+    # Task 2: Run latency SQL to rebuild the latency failure table
+    run_latency_sql_task = BigQueryInsertJobOperator(
+        task_id="run_latency_sql",
+        gcp_conn_id=BIGQUERY_CONN_ID,
+        configuration={
+            "query": {
+                "query": "{% include 'query.sql' %}",
+                "useLegacySql": False,
+                "writeDisposition": "WRITE_TRUNCATE",
+                "destinationTable": {
+                    "projectId": PROJECT_NAME,
+                    "datasetId": AUDIT_DATASET_NAME,
+                    "tableId": "raw_table_latency_failure_details_test",
+                },
+            }
+        },
+        location=LOCATION,
+    )
+
+    # Task 3: Run latency check on processed data
     latency_check_task = PythonOperator(
         task_id="run_latency_check",
         python_callable=run_latency_check,
         provide_context=True,
     )
 
-    # Task 3: Convert results to XLSX
+    # Task 4: Convert results to XLSX
     convert_xlsx_task = PythonOperator(
         task_id="convert_to_xlsx",
         python_callable=convert_to_xlsx,
         provide_context=True,
     )
 
-    # Task 4: Send notification (handles both success and failure)
+    # Task 5: Send notification (handles both success and failure)
     notify_task = PythonOperator(
         task_id="send_notification",
         python_callable=send_notification,
         provide_context=True,
-        trigger_rule="none_skipped",  # Run regardless of upstream success/failure, as long as not skipped
+        trigger_rule=TriggerRule.ALL_DONE,  # Run regardless of upstream success/failure
     )
 
     # Set up task dependencies
-    start_transfer >> latency_check_task >> convert_xlsx_task >> notify_task
+    start_transfer >> run_latency_sql_task >> latency_check_task >> convert_xlsx_task >> notify_task
 
     # Ensure notification runs even if upstream tasks fail
-    [start_transfer, latency_check_task, convert_xlsx_task] >> notify_task
+    [start_transfer, run_latency_sql_task, latency_check_task, convert_xlsx_task] >> notify_task
