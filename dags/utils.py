@@ -15,6 +15,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import quote
 
+import numpy as np
 import pandas as pd
 from airflow.models import Variable
 from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
@@ -370,16 +371,24 @@ def execute_bigquery_latency_check(
         # Convert DataFrame to list of dictionaries
         results_list = results.to_dict("records") if not results.empty else []
 
-        # Convert pandas Timestamp objects to strings for JSON serialization
+        # Convert pandas Timestamp objects and numpy arrays to JSON-serializable types
         if results_list:
             for record in results_list:
                 for key, value in record.items():
+                    # Convert numpy arrays to Python lists
+                    if isinstance(value, np.ndarray):
+                        record[key] = value.tolist()
                     # Convert pandas Timestamp objects to ISO format strings
-                    if hasattr(value, "isoformat"):  # This catches pandas Timestamps
+                    elif hasattr(value, "isoformat"):  # This catches pandas Timestamps
                         record[key] = value.isoformat()
                     # Handle NaT (Not a Time) values
                     elif str(value) == "NaT":
                         record[key] = None
+                    # Handle numpy scalar types
+                    elif isinstance(value, (np.integer, np.floating)):
+                        record[key] = value.item()
+                    elif isinstance(value, np.bool_):
+                        record[key] = bool(value)
 
         logging.info(f"✅ BigQuery execution completed. Found {len(results_list)} latency violations")
 
