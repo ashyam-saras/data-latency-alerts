@@ -2,15 +2,14 @@
 Data Latency Alerts DAG
 
 This DAG orchestrates data latency monitoring by:
-1. Triggering BigQuery Data Transfer Service job (waits for completion)
-2. Executing simple latency check query on processed data
+1. Running latency SQL query to build the failure details table
+2. Executing latency check query on processed data
 3. Converting results to XLSX format
 4. Sending appropriate Slack notifications (success or failure) with client-specific routing
 
 The DAG is scheduled to run once daily at 1:30 PM IST.
 
 FEATURES:
-- BigQuery Data Transfer Service integration
 - Rich Slack notifications with professional formatting
 - Direct links to Airflow logs for failed tasks
 - Single notification task handling both success and failure cases
@@ -18,18 +17,16 @@ FEATURES:
 - Client-specific Slack channel routing based on dataset patterns (regex matching)
 
 REQUIREMENTS:
-- BigQuery Data Transfer Service permissions
 - BigQuery connection with permissions to query processed tables
-- Service account needs: BigQuery Data Viewer, BigQuery Job User, BigQuery Data Transfer Admin
+- Service account needs: BigQuery Data Viewer, BigQuery Job User
 - Slack connection with necessary scopes for file uploads and messaging
 
 AIRFLOW VARIABLES:
 - LATENCY_ALERTS__PROJECT_NAME: GCP project name (default: insightsprod)
 - LATENCY_ALERTS__AUDIT_DATASET_NAME: Metadata dataset name (default: edm_insights_metadata)
 - LATENCY_ALERTS__BIGQUERY_LOCATION: BigQuery location (default: us-central1)
-- LATENCY_ALERTS__SLACK_CHANNELS: Slack channel configuration (supports JSON formats):
+- LATENCY_ALERTS__SLACK_CHANNELS: Slack channel configuration (supports JSON formats)
 - LATENCY_ALERTS__AIRFLOW_BASE_URL: Optional base URL for Airflow web UI (for DAG links, auto-detected for task logs)
-- LATENCY_ALERTS__BQ_DTS_CONFIG_ID: BigQuery DTS transfer configuration ID (must be in us-central1)
 """
 
 import base64
@@ -38,7 +35,6 @@ import logging
 
 # Import our utility functions
 import sys
-import time
 from datetime import timedelta
 from pathlib import Path
 
@@ -46,7 +42,6 @@ from airflow import DAG
 from airflow.models import Variable
 from airflow.operators.python import PythonOperator
 from airflow.providers.google.cloud.operators.bigquery import BigQueryInsertJobOperator
-from airflow.providers.google.cloud.operators.bigquery_dts import BigQueryDataTransferServiceStartTransferRunsOperator
 from airflow.utils.dates import days_ago
 from airflow.utils.state import State
 from airflow.utils.trigger_rule import TriggerRule
@@ -72,7 +67,6 @@ PROJECTS_ARRAY = json.loads(Variable.get("LATENCY_ALERTS__PROJECT_NAME", '["insi
 PROJECT_NAME = PROJECTS_ARRAY[0] if PROJECTS_ARRAY else "insightsprod"
 AUDIT_DATASET_NAME = Variable.get("LATENCY_ALERTS__AUDIT_DATASET_NAME", "edm_insights_metadata")
 LOCATION = Variable.get("LATENCY_ALERTS__BIGQUERY_LOCATION", "us-central1")
-TRANSFER_CONFIG_ID = Variable.get("LATENCY_ALERTS__BQ_DTS_CONFIG_ID")
 
 # BigQuery connection configuration
 BIGQUERY_CONN_ID = "data_latency_alerts__conn_id"
@@ -182,9 +176,7 @@ def send_notification(**context):
         error_message = f"Task '{failed_task_id}' failed - check logs for details"
 
         # Try to get more specific error context
-        if "transfer" in failed_task_id.lower():
-            error_message = f"BigQuery Data Transfer failed in task '{failed_task_id}'"
-        elif "latency" in failed_task_id.lower():
+        if "latency" in failed_task_id.lower():
             error_message = f"Latency check failed in task '{failed_task_id}'"
         elif "convert" in failed_task_id.lower():
             error_message = f"XLSX conversion failed in task '{failed_task_id}'"
@@ -247,24 +239,14 @@ def send_notification(**context):
 with DAG(
     dag_id=DAG_ID,
     default_args=DEFAULT_ARGS,
-    description="BigQuery Data Transfer + Latency monitoring with Slack notifications",
+    description="Latency monitoring with Slack notifications",
     schedule_interval=SCHEDULE_INTERVAL,
-    tags=["data-quality", "monitoring", "alerts", "bigquery", "slack", "data-transfer"],
+    tags=["data-quality", "monitoring", "alerts", "bigquery", "slack"],
     max_active_runs=1,
     doc_md=__doc__,
 ) as dag:
 
-    # Task 1: Trigger BigQuery Data Transfer Service
-    start_transfer = BigQueryDataTransferServiceStartTransferRunsOperator(
-        task_id="start_data_transfer",
-        project_id=PROJECT_NAME,
-        location=LOCATION,
-        transfer_config_id=TRANSFER_CONFIG_ID,
-        requested_run_time={"seconds": int(time.time() + 60)},  # Start in 1 minute
-        gcp_conn_id=BIGQUERY_CONN_ID,
-    )
-
-    # Task 2: Run latency SQL to rebuild the latency failure table
+    # Task 1: Run latency SQL to rebuild the latency failure table
     run_latency_sql_task = BigQueryInsertJobOperator(
         task_id="run_latency_sql",
         gcp_conn_id=BIGQUERY_CONN_ID,
@@ -283,21 +265,21 @@ with DAG(
         location=LOCATION,
     )
 
-    # Task 3: Run latency check on processed data
+    # Task 2: Run latency check on processed data
     latency_check_task = PythonOperator(
         task_id="run_latency_check",
         python_callable=run_latency_check,
         provide_context=True,
     )
 
-    # Task 4: Convert results to XLSX
+    # Task 3: Convert results to XLSX
     convert_xlsx_task = PythonOperator(
         task_id="convert_to_xlsx",
         python_callable=convert_to_xlsx,
         provide_context=True,
     )
 
-    # Task 5: Send notification (handles both success and failure)
+    # Task 4: Send notification (handles both success and failure)
     notify_task = PythonOperator(
         task_id="send_notification",
         python_callable=send_notification,
@@ -306,7 +288,7 @@ with DAG(
     )
 
     # Set up task dependencies
-    start_transfer >> run_latency_sql_task >> latency_check_task >> convert_xlsx_task >> notify_task
+    run_latency_sql_task >> latency_check_task >> convert_xlsx_task >> notify_task
 
     # Ensure notification runs even if upstream tasks fail
-    [start_transfer, run_latency_sql_task, latency_check_task, convert_xlsx_task] >> notify_task
+    [run_latency_sql_task, latency_check_task, convert_xlsx_task] >> notify_task
