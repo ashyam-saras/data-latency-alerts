@@ -2,251 +2,215 @@
 
 # Data Latency Alerts
 
-A streamlined Airflow DAG that monitors data freshness by integrating with BigQuery Data Transfer Service and sends rich Slack notifications with XLSX reports in threaded conversations.
+An Airflow DAG that monitors data freshness across multiple BigQuery projects and regions. It detects tables exceeding latency thresholds and sends rich Slack notifications with XLSX reports routed to client-specific channels.
 
-## 🏗️ Architecture Overview
+## Architecture
 
-Simple and efficient workflow:
+```mermaid
+flowchart TB
+  subgraph metadata ["Task 1: collect_metadata"]
+    direction TB
+    P1["insightsprod"]
+    P2["pulse-wellbeam"]
+    P3["pulse-instanthydration"]
+    P4["pulse-mantasleep"]
+    P5["pulse-javvycoffee"]
+    P6["pulse-nexus"]
 
-1. **BigQuery Data Transfer Service**: Triggers pre-configured transfer job and waits for completion
-2. **Direct Query**: Simple `SELECT *` from processed results table
-3. **XLSX Generation**: Converts results to XLSX with timestamp handling
-4. **Rich Slack Notifications**: Professional block formatting with threaded file attachments
+    R1["region-us-central1"]
+    R2["region-us"]
 
-## ✨ Features
+    P1 & P2 & P3 & P4 & P5 & P6 --> R1 & R2
 
-- **🔄 Data Transfer Integration**: Automated BigQuery DTS job triggering
-- **📊 Smart XLSX Reports**: Automatic timestamp conversion for JSON serialization
-- **🧵 Threaded File Attachments**: Reports sent as threaded replies for organized conversations
-- **🎨 Rich Slack Blocks**: Professional notifications with buttons linking to Airflow logs
-- **🔧 Flexible Channels**: Support for multiple comma-separated Slack channels
-- **⚡ Error Handling**: Context-aware failure notifications with direct links to task logs
-- **🏷️ Organized Variables**: All configuration uses `LATENCY_ALERTS__` prefix
+    R1 & R2 -->|"TABLE_STORAGE\nSCHEMATA_OPTIONS"| Staging["Staging Tables\nin BigQuery"]
+  end
 
-## 🚀 Quick Start
+  subgraph analysis ["Task 2: run_latency_sql"]
+    Staging --> Query["query.sql\nPattern matching\nThreshold evaluation\nDaton enrichment"]
+    Query --> Results["raw_table_latency_failure_details"]
+  end
 
-### 1. Configure Airflow Variables
+  subgraph reporting ["Tasks 3-5"]
+    Results --> Check["run_latency_check"]
+    Check --> XLSX["convert_to_xlsx"]
+    XLSX --> Slack["send_notification"]
+  end
 
-All variables use the `LATENCY_ALERTS__` prefix for organization:
-
-```bash
-# Required Variables
-LATENCY_ALERTS__BQ_DTS_CONFIG_ID = your-transfer-config-id
-
-# Core Configuration (with defaults)
-LATENCY_ALERTS__PROJECT_NAME = insightsprod
-LATENCY_ALERTS__AUDIT_DATASET_NAME = edm_insights_metadata  
-LATENCY_ALERTS__BIGQUERY_LOCATION = us-central1
-
-# Slack Configuration
-LATENCY_ALERTS__SLACK_CHANNELS = #data-alerts,#monitoring
-
-# Optional
-LATENCY_ALERTS__AIRFLOW_BASE_URL = https://your-airflow-instance.com
+  Slack --> Default["Default Channel"]
+  Slack --> Client["Client Channels\nvia regex routing"]
 ```
 
-### 2. Set Up Connections
+## How It Works
 
-**BigQuery Connection**: `data_latency_alerts__conn_id`
+### Cross-Region Metadata Collection
+
+BigQuery `INFORMATION_SCHEMA` views are region-scoped — a job in `us-central1` cannot access `region-us` metadata. To solve this, the DAG's first task uses Python with `BigQueryHook` to query each project and region combination separately (with the correct job location), then writes the combined results to staging tables in `us-central1`.
+
+This runs in parallel using `ThreadPoolExecutor` (6 workers) and gracefully skips project/region combinations that don't exist (404 errors are caught and logged).
+
+### Latency Evaluation
+
+The SQL query (`query.sql`) evaluates latency by:
+
+1. Reading pre-collected metadata from staging tables
+2. Filtering to monitored schemas: `_prod_raw`, `daton`, `BQ`, and `nexus_gds_raw`
+3. Applying exclusions (specific datasets and project-scoped exclusions)
+4. Matching tables against configurable latency patterns from `raw_table_latency_thresholds`
+5. Applying a 24-hour default threshold for daton/BQ tables that don't match any pattern
+6. Enriching results with Daton source metadata (platform, status, last error)
+
+### Client-Specific Slack Routing
+
+Alerts are routed to client-specific Slack channels using regex pattern matching on `table_schema`. Each result row is tested against configured patterns, and matching rows are sent to the appropriate channel. All results are always sent to the default channel as well.
+
+## DAG Workflow
+
+**Schedule**: Daily at 1:00 PM IST (7:30 UTC)
+
+```mermaid
+flowchart LR
+  T1["collect_metadata\n(PythonOperator)"]
+  T2["run_latency_sql\n(BigQueryInsertJobOperator)"]
+  T3["run_latency_check\n(PythonOperator)"]
+  T4["convert_to_xlsx\n(PythonOperator)"]
+  T5["send_notification\n(PythonOperator)"]
+
+  T1 --> T2 --> T3 --> T4 --> T5
+  T1 & T2 & T3 & T4 -.->|"ALL_DONE trigger"| T5
+```
+
+| Task | Type | Description |
+|------|------|-------------|
+| `collect_metadata` | PythonOperator | Queries `INFORMATION_SCHEMA.TABLE_STORAGE` and `SCHEMATA_OPTIONS` across all projects and regions, writes to staging tables |
+| `run_latency_sql` | BigQueryInsertJobOperator | Runs `query.sql` against staging tables, writes violations to `raw_table_latency_failure_details` |
+| `run_latency_check` | PythonOperator | Reads the violation results table into memory |
+| `convert_to_xlsx` | PythonOperator | Converts results to XLSX with auto-adjusted column widths |
+| `send_notification` | PythonOperator | Sends Slack notifications with routed results; handles both success and failure cases |
+
+The `send_notification` task uses `trigger_rule=ALL_DONE` so it runs even if upstream tasks fail, sending a failure alert instead.
+
+## Configuration
+
+### Airflow Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `LATENCY_ALERTS__PROJECT_NAME` | JSON array of GCP projects to monitor | `["insightsprod"]` |
+| `LATENCY_ALERTS__AUDIT_DATASET_NAME` | Dataset for metadata and staging tables | `edm_insights_metadata` |
+| `LATENCY_ALERTS__BIGQUERY_LOCATION` | BigQuery job location for analysis query | `us-central1` |
+| `LATENCY_ALERTS__SLACK_CHANNELS` | JSON channel routing config (see below) | Required |
+| `LATENCY_ALERTS__AIRFLOW_BASE_URL` | Base URL for Airflow log links in Slack | Auto-detected |
+
+### Slack Channel Configuration
+
+`LATENCY_ALERTS__SLACK_CHANNELS` is a JSON object where keys are regex patterns matched against `table_schema`, and values are Slack channel IDs. A `default` key is required.
+
+```json
+{
+  "3642|nexus_gds_raw": "C07178BP4G7",
+  "4997|poshpeanut": "C07SJE04J6T",
+  "4634|ridge": "C0A443TJHT4",
+  "4927|instanthydrati": "C0A87NP1GLR",
+  "5363|trueseamoss": "C0AFKSU9Z0V",
+  "5622|warmies": "C0AFKSU9Z0V",
+  "5667|homefield": "C0AFKSU9Z0V",
+  "default": "C06QY1KQJJG"
+}
+```
+
+Pattern keys use regex `search` — `4927|instanthydrati` matches any `table_schema` containing `4927` OR `instanthydrati` (handles truncated daton dataset names).
+
+### Airflow Connections
+
+**BigQuery**: `data_latency_alerts__conn_id`
 - Connection Type: Google Cloud
-- Service account with: BigQuery Data Viewer, BigQuery Job User, BigQuery Data Transfer Admin
+- Required roles: BigQuery Data Viewer, BigQuery Job User
 
-**Slack Connection**: `slack_default`
-- Connection Type: Slack Webhook
-- Password: Bot User OAuth Token (xoxb-...)
+**Slack**: `slack_default`
+- Connection Type: Slack
+- Password: Bot User OAuth Token (`xoxb-...`)
 - Required scopes: `chat:write`, `files:write`, `channels:read`, `groups:read`
 
-### 3. Deploy
+## Monitored Dataset Types
 
-The DAG automatically deploys when you push to the main branch.
+| Schema Pattern | Source | Threshold |
+|----------------|--------|-----------|
+| `%_prod_raw` | Raw data ingestion tables | Per-pattern from `raw_table_latency_thresholds` |
+| `%daton%` | Daton connector tables | Per-pattern, or 24h default |
+| `%BQ%` | BigQuery custom tables | Per-pattern, or 24h default |
+| `nexus_gds_raw` | Nexus GDS raw data | Per-pattern from `raw_table_latency_thresholds` |
 
-## 📋 DAG Workflow
+### Exclusion Mechanisms
 
-**Schedule**: Once daily at 11:30 AM IST
+1. **Dataset-level exclusions**: Hardcoded in `query.sql` (`table_schema NOT IN (...)`)
+2. **Project-scoped exclusions**: `NOT (source_project_id = 'X' AND table_schema = 'Y')`
+3. **Label-based exclusions**: Datasets with BigQuery label `latency_check_ignore=true`
+4. **Table-level ignore list**: `insightsprod.edm_insights_metadata.ignore_latency_tables_list`
 
-| Task | Description |
-|------|-------------|
-| `start_data_transfer` | Triggers BigQuery DTS job and waits for completion |
-| `run_latency_check` | Queries `raw_table_latency_failure_details` table |
-| `convert_to_xlsx` | Converts results to XLSX with proper timestamp handling |
-| `send_notification` | Sends success/failure notifications with rich formatting |
+## BigQuery Tables
 
-## 📊 Data Flow
+### Metadata Tables (read-only)
 
-```mermaid
-graph LR
-    A[BigQuery DTS] --> B[Transfer Complete]
-    B --> C[Query Results Table]
-    C --> D[Convert to XLSX]
-    D --> E[Slack Notification]
-    E --> F[Threaded File Reply]
-    
-    G[Any Task Failure] --> H[Failure Notification]
-```
+| Table | Purpose |
+|-------|---------|
+| `edm_insights_metadata.raw_table_latency_thresholds` | Pattern-to-threshold mapping |
+| `edm_insights_metadata.ignore_latency_tables_list` | Explicit table ignore list |
+| `pulse_metadata.gcp_postgres_daton_public_source_tables` | Daton source table metadata |
+| `pulse_metadata.gcp_postgres_daton_public_source` | Daton source metadata |
+| `pulse_metadata.gcp_postgres_daton_public_last_job_stats` | Daton job error details |
 
-## 🎯 Slack Notifications
+### Staging Tables (written by DAG)
 
-### Success Notifications
-- **📄 XLSX File**: Latency violations with rich context (sent as threaded reply)
-- **✅ No Violations**: Clean success message
-- **🔗 Action Buttons**: Direct links to Airflow DAG and task logs
+| Table | Written By | Read By |
+|-------|-----------|---------|
+| `edm_insights_metadata._latency_staging_table_storage` | `collect_metadata` task | `query.sql` |
+| `edm_insights_metadata._latency_staging_dataset_labels` | `collect_metadata` task | `query.sql` |
+| `edm_insights_metadata.raw_table_latency_failure_details` | `run_latency_sql` task | `run_latency_check` task |
 
-### Failure Notifications
-- **🚨 Context-Aware Messages**: Different messages for transfer, query, or conversion failures
-- **📋 Error Details**: Task-specific error information
-- **🔗 Log Access**: Direct buttons to failed task logs
-
-### Threaded File Attachments
-
-The system sends report attachments as threaded replies to keep conversations organized:
+## SQL Query Flow
 
 ```mermaid
-sequenceDiagram
-    participant DAG as Airflow DAG
-    participant Utils as Utils Module
-    participant Slack as Slack API
-    
-    DAG->>Utils: send_latency_report_to_slack()
-    Note over Utils: Process violations & build summary
-    
-    Utils->>Utils: send_slack_message_with_blocks()
-    Utils->>Slack: POST /chat.postMessage (summary blocks)
-    Slack-->>Utils: Response with message timestamp
-    Note over Utils: Store timestamp for threading
-    
-    alt violations_count > 0
-        Utils->>Utils: send_slack_file() with thread_ts
-        Utils->>Slack: POST /files.upload (with thread_ts)
-        Note over Slack: File appears as threaded reply
-        Slack-->>Utils: File upload response
-    end
-    
-    Utils-->>DAG: Complete with both results
+flowchart TB
+  Staging["_latency_staging_table_storage"] --> Dedup["deduped_table_storage\nFilter schemas, apply exclusions,\ndedup across projects"]
+  Labels["_latency_staging_dataset_labels"] --> Match
+  Patterns["raw_table_latency_thresholds"] --> Match
+  IgnoreList["ignore_latency_tables_list"] --> Match
+  Dedup --> Match["matched_tables\nLEFT JOIN patterns\nCOALESCE threshold with 24h default\nApply latency check"]
+  Match --> DedupMatch["deduped_matched_tables\nROW_NUMBER per schema+table"]
+  DedupMatch --> Final["Final SELECT\nJoin with Daton source metadata\nOrder by hours_since_last_update DESC"]
 ```
 
-### Block Templates
-- `latency_report_success`: For violations found
-- `latency_report_no_violations`: For clean runs
-- `bigquery_failure`: For BigQuery-specific errors
-- `slack_failure`: For Slack API errors
-
-## ⚙️ Configuration Details
-
-### Required Table Structure
-
-The DAG expects this table to exist after data transfer:
-```sql
-`{PROJECT_NAME}.{AUDIT_DATASET_NAME}.raw_table_latency_failure_details`
-```
-
-### Variable Reference
-
-| Variable | Description | Default | Required |
-|----------|-------------|---------|----------|
-| `LATENCY_ALERTS__BQ_DTS_CONFIG_ID` | Transfer config ID (must be in us-central1) | None | ✅ |
-| `LATENCY_ALERTS__PROJECT_NAME` | GCP project name | `insightsprod` | ❌ |
-| `LATENCY_ALERTS__AUDIT_DATASET_NAME` | Metadata dataset | `edm_insights_metadata` | ❌ |
-| `LATENCY_ALERTS__BIGQUERY_LOCATION` | BigQuery location | `us-central1` | ❌ |
-| `LATENCY_ALERTS__SLACK_CHANNELS` | Comma-separated channels | `#slack-bot-test` | ❌ |
-| `LATENCY_ALERTS__AIRFLOW_BASE_URL` | Base URL for DAG links | Auto-detected | ❌ |
-
-### Multiple Slack Channels
-
-Configure multiple channels with comma separation:
-```bash
-LATENCY_ALERTS__SLACK_CHANNELS = #data-alerts,#monitoring,#critical-alerts
-```
-
-## 📁 Project Structure
+## Project Structure
 
 ```
 data-latency-alerts/
 ├── dags/
-│   ├── data_latency_alerts_dag.py    # Main DAG file
-│   ├── utils.py                      # Utility functions
+│   ├── data_latency_alerts_dag.py    # DAG definition and task callables
+│   ├── query.sql                     # Latency evaluation SQL
+│   ├── utils.py                      # BigQuery, Slack, and metadata utilities
 │   └── slack_blocks.json             # Slack block templates
-├── config/
-│   └── README.md                     # Configuration guide
-├── composer/                         # Cloud Composer environment
-└── requirements.txt                  # Python dependencies
+├── composer/
+│   └── data-latency-alert/
+│       └── requirements.txt          # Python dependencies for Composer
+├── .github/
+│   └── workflows/
+│       └── deploy-dags.yml           # CI/CD deployment to Cloud Composer
+└── README.md
 ```
 
-## 🔧 Development
+## Deployment
 
-### Local Development
+DAGs automatically deploy to Cloud Composer when changes are pushed to `main` (paths: `dags/**` or the workflow file). The GitHub Actions workflow syncs the `dags/` directory to the Composer DAG bucket under a `data-latency-alerts/` subfolder.
 
-```bash
-# Clone repository
-git clone <your-repo-url>
-cd data-latency-alerts
+Manual deployment is also available via `workflow_dispatch` with optional bucket path or environment name inputs.
 
-# Install dependencies
-pip install -r requirements.txt
+## Troubleshooting
 
-# Set up environment variables (for testing)
-export LATENCY_ALERTS__PROJECT_NAME="your-project"
-export LATENCY_ALERTS__AUDIT_DATASET_NAME="your-dataset"
-```
-
-### Key Dependencies
-
-```
-apache-airflow==2.7.0
-apache-airflow-providers-google==10.10.0
-apache-airflow-providers-slack==7.3.0
-pandas==2.0.3
-openpyxl==3.1.2
-jinja2==3.1.2
-google-cloud-bigquery-datatransfer==3.11.0
-```
-
-## 🚨 Troubleshooting
-
-### Common Issues
-
-| Issue | Solution |
-|-------|----------|
-| **Transfer Config Not Found** | Verify `LATENCY_ALERTS__BQ_DTS_CONFIG_ID` and ensure config exists in `us-central1` |
-| **Permission Errors** | Check service account has BigQuery Data Transfer Admin role |
-| **Slack API Errors** | Verify connection scopes and bot permissions |
-| **Table Not Found** | Ensure data transfer creates the expected results table |
-| **Timestamp Serialization** | Fixed automatically - timestamps converted to ISO strings |
-
-### Debug Steps
-
-1. **Check Variables**: Admin → Variables in Airflow UI
-2. **Verify Connections**: Admin → Connections
-3. **Review Logs**: Click direct log buttons in Slack notifications
-4. **Test Transfer**: Manually run transfer config in BigQuery console
-
-## 🔄 Migration Notes
-
-If migrating from a previous version:
-
-1. **Update Variables**: Add `LATENCY_ALERTS__` prefix to all variables
-2. **Remove Old Files**: Delete unused test files and reports
-3. **Update Connections**: Ensure proper scopes and permissions
-4. **Verify Transfer Config**: Must be in `us-central1` location
-
-## 📈 Performance
-
-- **Execution Time**: ~2-5 minutes including transfer wait time
-- **Resource Efficiency**: Uses deferrable operators
-- **Scalability**: Handles large result sets with streaming
-- **Cost Optimization**: Single transfer + simple query approach
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create feature branch: `git checkout -b feature-name`
-3. Commit changes: `git commit -am 'Add feature'`
-4. Push branch: `git push origin feature-name`
-5. Create Pull Request
-
-## 📄 License
-
-This project is licensed under the MIT License.
-
----
-
-**Need Help?** Check the [configuration guide](config/README.md) or review the troubleshooting section above.
+| Issue | Cause | Fix |
+|-------|-------|-----|
+| `NotFound: TABLE_STORAGE` | Project has no datasets in that region | Handled automatically — logged as warning and skipped |
+| `LEFT ANTISEMI JOIN` error | `NOT EXISTS` with `LIKE` condition | Use pre-computed CTE with equality join instead |
+| Staging table not found | `collect_metadata` task failed or didn't run | Check task logs; ensure BigQuery connection has write access to audit dataset |
+| Missing daton/BQ tables | Dataset not matching schema filters | Verify `table_schema` matches `%daton%` or `%BQ%` patterns |
+| Slack routing not working | Pattern doesn't match `table_schema` | Test regex against actual `table_schema` values; use truncated prefixes for daton names |
+| Zero violations but tables are stale | Table excluded by labels or ignore list | Check `latency_check_ignore` label and `ignore_latency_tables_list` |

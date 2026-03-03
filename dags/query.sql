@@ -8,16 +8,11 @@ patterns AS (
 ),
 
 -- ---------------------------------------------------------------------
--- TABLE_STORAGE across dynamic projects
+-- TABLE_STORAGE (pre-collected across all projects and regions)
 -- ---------------------------------------------------------------------
 table_storage_all AS (
-{% for project in var.json.LATENCY_ALERTS__PROJECT_NAME %}
-  SELECT
-    '{{ project }}' AS source_project_id,
-    *
-  FROM `{{ project }}.region-us-central1.INFORMATION_SCHEMA.TABLE_STORAGE`
-  {% if not loop.last %}UNION ALL{% endif %}
-{% endfor %}
+  SELECT *
+  FROM `insightsprod.edm_insights_metadata._latency_staging_table_storage`
 ),
 
 -- ---------------------------------------------------------------------
@@ -33,24 +28,34 @@ deduped_table_storage AS (
   WHERE deleted = FALSE
     AND (
       table_schema LIKE '%_prod_raw'
+      OR table_schema LIKE '%daton%'
+      OR UPPER(table_schema) LIKE '%BQ%'
       OR table_schema IN ('nexus_gds_raw')
     )
+    AND table_schema NOT IN (
+      'daton_healthycell_kr',
+      'DatonPearlWestGroup',
+      'IH_Daton',
+      'daton_eskiin_custom_backup',
+      'lhappyinnov_daton_backup',
+      'marketdefense_daton_staging',
+      'wellbeam_daton_backup'
+    )
+    AND NOT (source_project_id = 'insightsprod' AND table_schema = 'Manta_Daton')
+    AND NOT (source_project_id = 'insightsprod' AND table_schema = 'daton_instanthydrati')
+    AND NOT (source_project_id = 'pulse-instanthydration' AND table_schema = 'daton_instanthydrati')
+    AND NOT (source_project_id = 'insightsprod' AND table_schema = 'daton_javvycofee')
+    AND NOT (source_project_id = 'insightsprod' AND table_schema = 'wellbeam_daton')
+    AND table_name != 'daton_metadata'
   GROUP BY table_schema, table_name
 ),
 
 -- ---------------------------------------------------------------------
--- Dataset labels (ignore latency_check_ignore=true)
+-- Dataset labels (pre-collected, ignore latency_check_ignore=true)
 -- ---------------------------------------------------------------------
 dataset_labels AS (
-{% for project in var.json.LATENCY_ALERTS__PROJECT_NAME %}
-  SELECT
-    '{{ project }}' AS project_id,
-    schema_name
-  FROM `{{ project }}.region-us-central1.INFORMATION_SCHEMA.SCHEMATA_OPTIONS`
-  WHERE option_name = 'labels'
-    AND option_value LIKE '%"latency_check_ignore", "true"%'
-  {% if not loop.last %}UNION ALL{% endif %}
-{% endfor %}
+  SELECT DISTINCT schema_name
+  FROM `insightsprod.edm_insights_metadata._latency_staging_dataset_labels`
 ),
 
 -- ---------------------------------------------------------------------
@@ -64,14 +69,14 @@ table_labels AS (
 ),
 
 -- ---------------------------------------------------------------------
--- Latency evaluation
+-- Latency evaluation: single-pass pattern matching with daton fallback
 -- ---------------------------------------------------------------------
 matched_tables AS (
   SELECT
     dts.table_schema,
     dts.table_name,
     DATETIME(dts.storage_last_modified_time, "Asia/Kolkata") AS last_update,
-    p.latency_threshold,
+    COALESCE(p.latency_threshold, 24) AS latency_threshold,
     TIMESTAMP_DIFF(
       DATETIME(CURRENT_TIMESTAMP(), "Asia/Kolkata"),
       DATETIME(dts.storage_last_modified_time, "Asia/Kolkata"),
@@ -79,22 +84,23 @@ matched_tables AS (
     ) AS hours_since_last_update,
     dts.present_in_projects
   FROM deduped_table_storage dts
-  CROSS JOIN patterns p
+  LEFT JOIN patterns p
+    ON LOWER(dts.table_name) LIKE p.table_pattern
+   AND p.latency_threshold IS NOT NULL
   LEFT JOIN dataset_labels dl
     ON dl.schema_name = dts.table_schema
   LEFT JOIN table_labels tl
     ON tl.table_schema = dts.table_schema
    AND tl.table_name = dts.table_name
   WHERE
-    LOWER(dts.table_name) LIKE p.table_pattern
-    AND p.latency_threshold IS NOT NULL
+    (p.table_pattern IS NOT NULL OR dts.table_schema LIKE '%daton%' OR UPPER(dts.table_schema) LIKE '%BQ%')
+    AND dl.schema_name IS NULL
+    AND tl.table_name IS NULL
     AND DATETIME(dts.storage_last_modified_time, "Asia/Kolkata")
         < TIMESTAMP_SUB(
             DATETIME(CURRENT_TIMESTAMP(), "Asia/Kolkata"),
-            INTERVAL p.latency_threshold HOUR
+            INTERVAL COALESCE(p.latency_threshold, 24) HOUR
           )
-    AND dl.schema_name IS NULL
-    AND tl.table_name IS NULL
 ),
 
 -- ---------------------------------------------------------------------
