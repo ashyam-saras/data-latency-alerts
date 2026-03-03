@@ -189,9 +189,6 @@ data-latency-alerts/
 │   ├── query.sql                     # Latency evaluation SQL
 │   ├── utils.py                      # BigQuery, Slack, and metadata utilities
 │   └── slack_blocks.json             # Slack block templates
-├── composer/
-│   └── data-latency-alert/
-│       └── requirements.txt          # Python dependencies for Composer
 ├── .github/
 │   └── workflows/
 │       └── deploy-dags.yml           # CI/CD deployment to Cloud Composer
