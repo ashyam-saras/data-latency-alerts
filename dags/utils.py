@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import quote
 
@@ -20,7 +21,164 @@ import pandas as pd
 from airflow.models import Variable
 from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 from airflow.providers.slack.hooks.slack import SlackHook
+from google.cloud.bigquery import LoadJobConfig, WriteDisposition
 from jinja2 import Template
+
+REGIONS: List[Tuple[str, str]] = [
+    ("region-us-central1", "us-central1"),
+    ("region-us", "US"),
+]
+
+_TABLE_STORAGE_SQL = """
+SELECT
+  '{project}' AS source_project_id,
+  table_schema,
+  table_name,
+  storage_last_modified_time,
+  deleted
+FROM `{project}.{region_path}.INFORMATION_SCHEMA.TABLE_STORAGE`
+"""
+
+_DATASET_LABELS_SQL = """
+SELECT DISTINCT schema_name
+FROM `{project}.{region_path}.INFORMATION_SCHEMA.SCHEMATA_OPTIONS`
+WHERE option_name = 'labels'
+  AND option_value LIKE '%"latency_check_ignore", "true"%'
+"""
+
+
+def _run_bq_query(
+    gcp_conn_id: str,
+    job_location: str,
+    sql: str,
+    description: str,
+) -> Optional[pd.DataFrame]:
+    """Execute a single BigQuery query, returning a DataFrame or None on 404."""
+    try:
+        hook = BigQueryHook(
+            gcp_conn_id=gcp_conn_id,
+            location=job_location,
+            use_legacy_sql=False,
+        )
+        df = hook.get_pandas_df(sql=sql, dialect="standard")
+        logging.info("✅ %s — %d rows", description, len(df))
+        return df
+    except Exception as exc:
+        if "NotFound" in type(exc).__name__ or "404" in str(exc):
+            logging.warning("⚠️ %s — not found, skipping", description)
+            return None
+        raise
+
+
+def collect_cross_region_metadata(
+    projects: List[str],
+    dest_project: str,
+    dest_dataset: str,
+    gcp_conn_id: str,
+    max_workers: int = 6,
+) -> Dict[str, int]:
+    """
+    Collect TABLE_STORAGE and SCHEMATA_OPTIONS from all project x region
+    combinations and write the results to staging tables in BigQuery.
+
+    Returns dict with row counts for each staging table.
+    """
+    logging.info(
+        "🔄 Collecting metadata for %d project(s) across %d region(s)",
+        len(projects),
+        len(REGIONS),
+    )
+
+    storage_futures: Dict[Any, str] = {}
+    labels_futures: Dict[Any, str] = {}
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for project in projects:
+            for region_path, job_location in REGIONS:
+                tag = f"{project}/{region_path}"
+
+                storage_futures[
+                    executor.submit(
+                        _run_bq_query,
+                        gcp_conn_id,
+                        job_location,
+                        _TABLE_STORAGE_SQL.format(project=project, region_path=region_path),
+                        f"TABLE_STORAGE {tag}",
+                    )
+                ] = tag
+
+                labels_futures[
+                    executor.submit(
+                        _run_bq_query,
+                        gcp_conn_id,
+                        job_location,
+                        _DATASET_LABELS_SQL.format(project=project, region_path=region_path),
+                        f"SCHEMATA_OPTIONS {tag}",
+                    )
+                ] = tag
+
+    storage_dfs: List[pd.DataFrame] = []
+    for future in as_completed(storage_futures):
+        df = future.result()
+        if df is not None and not df.empty:
+            storage_dfs.append(df)
+
+    labels_dfs: List[pd.DataFrame] = []
+    for future in as_completed(labels_futures):
+        df = future.result()
+        if df is not None and not df.empty:
+            labels_dfs.append(df)
+
+    combined_storage = pd.concat(storage_dfs, ignore_index=True) if storage_dfs else pd.DataFrame()
+    combined_labels = pd.concat(labels_dfs, ignore_index=True) if labels_dfs else pd.DataFrame()
+
+    if combined_storage.empty:
+        raise RuntimeError(
+            "TABLE_STORAGE returned zero rows across all project/region "
+            "combinations — cannot proceed with latency checks"
+        )
+
+    logging.info(
+        "📊 Collected %d TABLE_STORAGE rows, %d dataset label rows",
+        len(combined_storage),
+        len(combined_labels),
+    )
+
+    _write_staging_table(
+        df=combined_storage,
+        table_id=f"{dest_project}.{dest_dataset}._latency_staging_table_storage",
+        gcp_conn_id=gcp_conn_id,
+        location="us-central1",
+    )
+    _write_staging_table(
+        df=combined_labels if not combined_labels.empty else pd.DataFrame({"schema_name": pd.Series(dtype="str")}),
+        table_id=f"{dest_project}.{dest_dataset}._latency_staging_dataset_labels",
+        gcp_conn_id=gcp_conn_id,
+        location="us-central1",
+    )
+
+    return {
+        "table_storage_rows": len(combined_storage),
+        "dataset_labels_rows": len(combined_labels),
+    }
+
+
+def _write_staging_table(
+    df: pd.DataFrame,
+    table_id: str,
+    gcp_conn_id: str,
+    location: str,
+) -> None:
+    """Write a DataFrame to a BigQuery table with WRITE_TRUNCATE."""
+    hook = BigQueryHook(gcp_conn_id=gcp_conn_id, location=location, use_legacy_sql=False)
+    client = hook.get_client(project_id=table_id.split(".")[0])
+
+    job_config = LoadJobConfig(write_disposition=WriteDisposition.WRITE_TRUNCATE)
+    load_job = client.load_table_from_dataframe(df, table_id, job_config=job_config)
+    load_job.result()
+
+    logging.info("✅ Wrote %d rows to %s", len(df), table_id)
+
 
 # Slack routing edge cases (documented per requirements):
 # - Duplicate regex patterns

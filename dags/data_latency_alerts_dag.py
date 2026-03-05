@@ -2,10 +2,11 @@
 Data Latency Alerts DAG
 
 This DAG orchestrates data latency monitoring by:
-1. Running latency SQL query to build the failure details table
-2. Executing latency check query on processed data
-3. Converting results to XLSX format
-4. Sending appropriate Slack notifications (success or failure) with client-specific routing
+1. Collecting TABLE_STORAGE and SCHEMATA_OPTIONS metadata across all projects and regions
+2. Running latency SQL query to build the failure details table
+3. Executing latency check query on processed data
+4. Converting results to XLSX format
+5. Sending appropriate Slack notifications (success or failure) with client-specific routing
 
 The DAG is scheduled to run once daily at 1:00 PM IST.
 
@@ -51,6 +52,7 @@ current_dir = Path(__file__).parent
 sys.path.insert(0, str(current_dir))
 
 from utils import (
+    collect_cross_region_metadata,
     convert_results_to_xlsx,
     execute_bigquery_latency_check,
     send_failure_notification,
@@ -103,6 +105,25 @@ DEFAULT_ARGS = {
     "retry_delay": timedelta(minutes=0),
     "catchup": False,
 }
+
+def collect_metadata(**context):
+    """
+    Collect TABLE_STORAGE and SCHEMATA_OPTIONS from all projects and regions,
+    then write to staging tables for the downstream SQL analysis query.
+    """
+    stats = collect_cross_region_metadata(
+        projects=PROJECTS_ARRAY,
+        dest_project=PROJECT_NAME,
+        dest_dataset=AUDIT_DATASET_NAME,
+        gcp_conn_id=BIGQUERY_CONN_ID,
+    )
+    logging.info(
+        "📊 Metadata collection complete: %d storage rows, %d label rows",
+        stats["table_storage_rows"],
+        stats["dataset_labels_rows"],
+    )
+    return stats
+
 
 def run_latency_check(**context):
     """
@@ -246,7 +267,14 @@ with DAG(
     doc_md=__doc__,
 ) as dag:
 
-    # Task 1: Run latency SQL to rebuild the latency failure table
+    # Task 1: Collect metadata from all projects and regions into staging tables
+    collect_metadata_task = PythonOperator(
+        task_id="collect_metadata",
+        python_callable=collect_metadata,
+        provide_context=True,
+    )
+
+    # Task 2: Run latency SQL to rebuild the latency failure table
     run_latency_sql_task = BigQueryInsertJobOperator(
         task_id="run_latency_sql",
         gcp_conn_id=BIGQUERY_CONN_ID,
@@ -265,30 +293,30 @@ with DAG(
         location=LOCATION,
     )
 
-    # Task 2: Run latency check on processed data
+    # Task 3: Run latency check on processed data
     latency_check_task = PythonOperator(
         task_id="run_latency_check",
         python_callable=run_latency_check,
         provide_context=True,
     )
 
-    # Task 3: Convert results to XLSX
+    # Task 4: Convert results to XLSX
     convert_xlsx_task = PythonOperator(
         task_id="convert_to_xlsx",
         python_callable=convert_to_xlsx,
         provide_context=True,
     )
 
-    # Task 4: Send notification (handles both success and failure)
+    # Task 5: Send notification (handles both success and failure)
     notify_task = PythonOperator(
         task_id="send_notification",
         python_callable=send_notification,
         provide_context=True,
-        trigger_rule=TriggerRule.ALL_DONE,  # Run regardless of upstream success/failure
+        trigger_rule=TriggerRule.ALL_DONE,
     )
 
     # Set up task dependencies
-    run_latency_sql_task >> latency_check_task >> convert_xlsx_task >> notify_task
+    collect_metadata_task >> run_latency_sql_task >> latency_check_task >> convert_xlsx_task >> notify_task
 
     # Ensure notification runs even if upstream tasks fail
-    [run_latency_sql_task, latency_check_task, convert_xlsx_task] >> notify_task
+    [collect_metadata_task, run_latency_sql_task, latency_check_task, convert_xlsx_task] >> notify_task
