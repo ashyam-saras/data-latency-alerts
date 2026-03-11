@@ -268,10 +268,14 @@ with DAG(
 ) as dag:
 
     # Task 1: Collect metadata from all projects and regions into staging tables
+    # Retries guard against transient BQ API failures (rate limits, timeouts)
+    # that survive the per-query retry logic inside collect_cross_region_metadata.
     collect_metadata_task = PythonOperator(
         task_id="collect_metadata",
         python_callable=collect_metadata,
         provide_context=True,
+        retries=2,
+        retry_delay=timedelta(minutes=1),
     )
 
     # Task 2: Run latency SQL to rebuild the latency failure table
