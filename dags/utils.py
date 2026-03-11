@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import quote
@@ -46,28 +47,70 @@ WHERE option_name = 'labels'
   AND option_value LIKE '%"latency_check_ignore", "true"%'
 """
 
+_TRANSIENT_PATTERNS = (
+    "rateLimitExceeded", "backendError", "internalError",
+    "Timeout", "ServiceUnavailable", "503", "429",
+    "ConnectionError", "ConnectionReset", "BrokenPipe",
+    "deadline", "Unavailable", "UNAVAILABLE", "Retry",
+)
+
+
+def _is_transient(exc: Exception) -> bool:
+    text = f"{type(exc).__name__}: {exc}"
+    lower = text.lower()
+    return any(p.lower() in lower for p in _TRANSIENT_PATTERNS)
+
 
 def _run_bq_query(
     gcp_conn_id: str,
     job_location: str,
     sql: str,
     description: str,
+    max_retries: int = 3,
+    base_delay: float = 10.0,
 ) -> Optional[pd.DataFrame]:
-    """Execute a single BigQuery query, returning a DataFrame or None on 404."""
-    try:
-        hook = BigQueryHook(
-            gcp_conn_id=gcp_conn_id,
-            location=job_location,
-            use_legacy_sql=False,
-        )
-        df = hook.get_pandas_df(sql=sql, dialect="standard")
-        logging.info("✅ %s — %d rows", description, len(df))
-        return df
-    except Exception as exc:
-        if "NotFound" in type(exc).__name__ or "404" in str(exc):
-            logging.warning("⚠️ %s — not found, skipping", description)
-            return None
-        raise
+    """Execute a BigQuery query, retrying transient failures with exponential backoff."""
+    for attempt in range(1, max_retries + 1):
+        try:
+            hook = BigQueryHook(
+                gcp_conn_id=gcp_conn_id,
+                location=job_location,
+                use_legacy_sql=False,
+            )
+            df = hook.get_pandas_df(sql=sql, dialect="standard")
+            if attempt > 1:
+                logging.info("✅ %s — %d rows (succeeded on attempt %d)", description, len(df), attempt)
+            else:
+                logging.info("✅ %s — %d rows", description, len(df))
+            return df
+        except Exception as exc:
+            if "NotFound" in type(exc).__name__ or "404" in str(exc):
+                logging.warning("⚠️ %s — not found, skipping", description)
+                return None
+            if attempt < max_retries and _is_transient(exc):
+                delay = base_delay * (2 ** (attempt - 1))
+                logging.warning(
+                    "⚠️ %s — attempt %d/%d failed (%s): %s. Retrying in %.0fs…",
+                    description, attempt, max_retries,
+                    type(exc).__name__, str(exc)[:200], delay,
+                )
+                time.sleep(delay)
+                continue
+            logging.error(
+                "❌ %s — failed after %d attempt(s): %s",
+                description, attempt, str(exc)[:300],
+            )
+            raise
+    raise RuntimeError(f"{description} — exhausted all {max_retries} retry attempts")
+
+
+def _build_regional_union_sql(
+    template: str, projects: List[str], region_path: str,
+) -> str:
+    """Build a UNION ALL query combining all projects for a single region."""
+    return "\nUNION ALL\n".join(
+        template.format(project=p, region_path=region_path) for p in projects
+    )
 
 
 def collect_cross_region_metadata(
@@ -75,62 +118,63 @@ def collect_cross_region_metadata(
     dest_project: str,
     dest_dataset: str,
     gcp_conn_id: str,
-    max_workers: int = 6,
+    max_workers: int = 4,
 ) -> Dict[str, int]:
     """
     Collect TABLE_STORAGE and SCHEMATA_OPTIONS from all project x region
     combinations and write the results to staging tables in BigQuery.
 
+    Uses UNION ALL to batch all projects into a single query per region,
+    reducing API calls from (projects × regions × 2) down to (regions × 2).
+    Each query is retried with exponential backoff on transient failures.
+
     Returns dict with row counts for each staging table.
     """
+    individual_count = len(projects) * len(REGIONS) * 2
+    batched_count = len(REGIONS) * 2
     logging.info(
-        "🔄 Collecting metadata for %d project(s) across %d region(s)",
-        len(projects),
-        len(REGIONS),
+        "🔄 Collecting metadata for %d project(s) across %d region(s) "
+        "— %d batched queries (UNION ALL) instead of %d individual queries",
+        len(projects), len(REGIONS), batched_count, individual_count,
     )
 
-    storage_futures: Dict[Any, str] = {}
-    labels_futures: Dict[Any, str] = {}
+    queries: List[Dict[str, str]] = []
+    for region_path, job_location in REGIONS:
+        queries.append({
+            "sql": _build_regional_union_sql(_TABLE_STORAGE_SQL, projects, region_path),
+            "location": job_location,
+            "description": f"TABLE_STORAGE {region_path} ({len(projects)} projects)",
+            "type": "storage",
+        })
+        queries.append({
+            "sql": _build_regional_union_sql(_DATASET_LABELS_SQL, projects, region_path),
+            "location": job_location,
+            "description": f"SCHEMATA_OPTIONS {region_path} ({len(projects)} projects)",
+            "type": "labels",
+        })
+
+    results: Dict[str, List[pd.DataFrame]] = {"storage": [], "labels": []}
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        for project in projects:
-            for region_path, job_location in REGIONS:
-                tag = f"{project}/{region_path}"
+        future_to_query = {
+            executor.submit(
+                _run_bq_query,
+                gcp_conn_id,
+                q["location"],
+                q["sql"],
+                q["description"],
+            ): q
+            for q in queries
+        }
 
-                storage_futures[
-                    executor.submit(
-                        _run_bq_query,
-                        gcp_conn_id,
-                        job_location,
-                        _TABLE_STORAGE_SQL.format(project=project, region_path=region_path),
-                        f"TABLE_STORAGE {tag}",
-                    )
-                ] = tag
-
-                labels_futures[
-                    executor.submit(
-                        _run_bq_query,
-                        gcp_conn_id,
-                        job_location,
-                        _DATASET_LABELS_SQL.format(project=project, region_path=region_path),
-                        f"SCHEMATA_OPTIONS {tag}",
-                    )
-                ] = tag
-
-    storage_dfs: List[pd.DataFrame] = []
-    for future in as_completed(storage_futures):
+    for future in as_completed(future_to_query):
+        q = future_to_query[future]
         df = future.result()
         if df is not None and not df.empty:
-            storage_dfs.append(df)
+            results[q["type"]].append(df)
 
-    labels_dfs: List[pd.DataFrame] = []
-    for future in as_completed(labels_futures):
-        df = future.result()
-        if df is not None and not df.empty:
-            labels_dfs.append(df)
-
-    combined_storage = pd.concat(storage_dfs, ignore_index=True) if storage_dfs else pd.DataFrame()
-    combined_labels = pd.concat(labels_dfs, ignore_index=True) if labels_dfs else pd.DataFrame()
+    combined_storage = pd.concat(results["storage"], ignore_index=True) if results["storage"] else pd.DataFrame()
+    combined_labels = pd.concat(results["labels"], ignore_index=True) if results["labels"] else pd.DataFrame()
 
     if combined_storage.empty:
         raise RuntimeError(
