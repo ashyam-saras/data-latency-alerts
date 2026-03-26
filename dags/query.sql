@@ -82,7 +82,8 @@ matched_tables AS (
       DATETIME(dts.storage_last_modified_time, "Asia/Kolkata"),
       HOUR
     ) AS hours_since_last_update,
-    dts.present_in_projects
+    dts.present_in_projects,
+    p.table_pattern
   FROM deduped_table_storage dts
   LEFT JOIN patterns p
     ON LOWER(dts.table_name) LIKE p.table_pattern
@@ -119,7 +120,7 @@ deduped_matched_tables AS (
   QUALIFY
     ROW_NUMBER() OVER (
       PARTITION BY table_schema, table_name
-      ORDER BY last_update DESC
+      ORDER BY last_update DESC, LENGTH(table_pattern) DESC
     ) = 1
 ),
 
