@@ -1,0 +1,23 @@
+dags/query.sql
+  de44dc99dd4c072c 85-86,123
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "3aff93c51d6085bd79591944edbf493e72c3415b",
+  "prompts": {
+    "de44dc99dd4c072c": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e3ae48c2-f3e8-4eb1-8817-5959d4003b4e",
+        "model": "claude-4.6-opus-high-thinking"
+      },
+      "human_author": "Vaibhav-DE <vaibhav.singh@sarasanalytics.com>",
+      "messages": [],
+      "total_additions": 228,
+      "total_deletions": 227,
+      "accepted_lines": 227,
+      "overriden_lines": 0
+    }
+  }
+}
