@@ -1,0 +1,25 @@
+README.md
+  s_8bcadb7c3cb271::t_ea7385eedd3f7d 56
+  s_8bcadb7c3cb271::t_4b180d726ac617 142
+scripts/update_klaviyo_patterns_to_klav.sql
+  s_8bcadb7c3cb271::t_29e4daa84851c6 1-37
+dags/query.sql
+  s_8bcadb7c3cb271::t_e06e68cd9faffe 33
+  s_8bcadb7c3cb271::t_9d1310375368d2 97-102
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "7f8353aafb2aee1853aee8431a553c1c5b87a12c",
+  "prompts": {},
+  "sessions": {
+    "s_8bcadb7c3cb271": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "8339d2a1-bb45-4680-80fc-e534412aa35b",
+        "model": "default"
+      },
+      "human_author": "Vaibhav-DE <vaibhav.singh@sarasanalytics.com>"
+    }
+  }
+}
