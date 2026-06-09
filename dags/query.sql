@@ -30,7 +30,7 @@ deduped_table_storage AS (
       table_schema LIKE '%_prod_raw'
       OR table_schema LIKE '%daton%'
       OR UPPER(table_schema) LIKE '%BQ%'
-      OR table_schema IN ('nexus_gds_raw')
+      OR table_schema IN ('nexus_gds_raw', 'ridge_4634_prod_data')
     )
     AND table_schema NOT IN (
       'daton_healthycell_kr',
@@ -94,7 +94,12 @@ matched_tables AS (
     ON tl.table_schema = dts.table_schema
    AND tl.table_name = dts.table_name
   WHERE
-    (p.table_pattern IS NOT NULL OR dts.table_schema LIKE '%daton%' OR UPPER(dts.table_schema) LIKE '%BQ%')
+    (
+      p.table_pattern IS NOT NULL
+      OR dts.table_schema LIKE '%daton%'
+      OR UPPER(dts.table_schema) LIKE '%BQ%'
+      OR dts.table_schema = 'ridge_4634_prod_data'
+    )
     AND dl.schema_name IS NULL
     AND tl.table_name IS NULL
     AND DATETIME(dts.storage_last_modified_time, "Asia/Kolkata")

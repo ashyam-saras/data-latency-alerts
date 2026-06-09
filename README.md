@@ -53,7 +53,7 @@ This runs in parallel using `ThreadPoolExecutor` (6 workers) and gracefully skip
 The SQL query (`query.sql`) evaluates latency by:
 
 1. Reading pre-collected metadata from staging tables
-2. Filtering to monitored schemas: `_prod_raw`, `daton`, `BQ`, and `nexus_gds_raw`
+2. Filtering to monitored schemas: `_prod_raw`, `daton`, `BQ`, `nexus_gds_raw`, and `ridge_4634_prod_data`
 3. Applying exclusions (specific datasets and project-scoped exclusions)
 4. Matching tables against configurable latency patterns from `raw_table_latency_thresholds`
 5. Applying a 24-hour default threshold for daton/BQ tables that don't match any pattern
@@ -139,6 +139,7 @@ Pattern keys use regex `search` — `4927|instanthydrati` matches any `table_sch
 | `%daton%` | Daton connector tables | Per-pattern, or 24h default |
 | `%BQ%` | BigQuery custom tables | Per-pattern, or 24h default |
 | `nexus_gds_raw` | Nexus GDS raw data | Per-pattern from `raw_table_latency_thresholds` |
+| `ridge_4634_prod_data` | Ridge custom ingested data | Per-pattern, or 24h default |
 
 ### Exclusion Mechanisms
 
