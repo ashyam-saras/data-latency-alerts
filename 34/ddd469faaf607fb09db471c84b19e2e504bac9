@@ -1,0 +1,20 @@
+dags/utils.py
+  s_2a7ebf55dd2c81::t_14766a3daf1e7d 293
+  s_2a7ebf55dd2c81::t_ed39522b49871f 342
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "34ddd469faaf607fb09db471c84b19e2e504bac9",
+  "prompts": {},
+  "sessions": {
+    "s_2a7ebf55dd2c81": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "4a926dfe-2429-4ab8-b9a5-a83f5ef8b8fe",
+        "model": "default"
+      },
+      "human_author": "Vaibhav-DE <vaibhav.singh@sarasanalytics.com>"
+    }
+  }
+}
