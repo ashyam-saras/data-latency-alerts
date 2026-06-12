@@ -290,7 +290,7 @@ def parse_slack_channels_config(config_str: str) -> Dict[str, Any]:
     Rules:
         - JSON must be a dictionary
         - A "default" key is mandatory and must contain at least one channel
-        - Each non-default key is treated as a regex pattern mapped to comma-separated channels
+        - Each non-default key is treated as a case-insensitive regex pattern mapped to comma-separated channels
 
     Returns:
         dict with the following keys:
@@ -339,7 +339,7 @@ def parse_slack_channels_config(config_str: str) -> Dict[str, Any]:
         channels = _normalize_channel_value(value, context=f"pattern '{pattern_str}'")
 
         try:
-            compiled_regex = re.compile(pattern_str)
+            compiled_regex = re.compile(pattern_str, re.IGNORECASE)
         except re.error as exc:
             raise ValueError(f"Invalid regex pattern '{pattern_str}': {exc}") from exc
 
