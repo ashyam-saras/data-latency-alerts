@@ -252,6 +252,58 @@ def _normalize_channel_value(raw_value: Any, *, context: str) -> List[str]:
     return channels
 
 
+_SLACK_CHANNEL_ID_RE = re.compile(r"^[CGD][A-Z0-9]{8,}$", re.IGNORECASE)
+
+
+def _looks_like_slack_channel_id(channel: str) -> bool:
+    """Return True when the value already looks like a Slack conversation ID."""
+    normalized = channel.strip().lstrip("#")
+    return bool(_SLACK_CHANNEL_ID_RE.match(normalized))
+
+
+def _resolve_slack_channel_id(channel: str, slack_hook: SlackHook) -> str:
+    """
+    Resolve a Slack channel reference to the channel ID required by files_upload_v2.
+
+    chat.postMessage accepts channel names, but files_upload_v2 only accepts IDs.
+    """
+    normalized = channel.strip()
+    if normalized.startswith("#"):
+        normalized = normalized[1:]
+
+    if _looks_like_slack_channel_id(normalized):
+        return normalized
+
+    cursor = None
+    while True:
+        request_data: Dict[str, Any] = {
+            "types": "public_channel,private_channel",
+            "limit": 200,
+        }
+        if cursor:
+            request_data["cursor"] = cursor
+
+        response = slack_hook.call(api_method="conversations.list", data=request_data)
+        if not response.get("ok"):
+            error = response.get("error", "unknown error")
+            raise ValueError(
+                f"Unable to resolve Slack channel '{channel}' via conversations.list: {error}"
+            )
+
+        for conversation in response.get("channels", []):
+            if conversation.get("name") == normalized or conversation.get("id") == normalized:
+                return conversation["id"]
+
+        cursor = response.get("response_metadata", {}).get("next_cursor")
+        if not cursor:
+            break
+
+    raise ValueError(
+        f"Slack channel '{channel}' not found. files_upload_v2 requires a channel ID "
+        f"(for example C065MG2L63U), not a channel name."
+    )
+
+
 def _deduplicate_preserve_order(items: List[str]) -> List[str]:
     """
     Remove duplicates from a list while preserving order.
@@ -282,10 +334,13 @@ def parse_slack_channels_config(config_str: str) -> Dict[str, Any]:
 
     Expected format (JSON string):
     {
-      "3461": "#clientA-alerts",
-      "4321|3476": "#clientAB-alerts",
-      "default": "#data-alerts,#monitoring"
+      "3461": "C0123456789",
+      "4321|3476": "C0987654321",
+      "default": "C0111111111,C0222222222"
     }
+
+    Channel values must be Slack channel IDs (for example C06QY1KQJJG).
+    files_upload_v2 does not accept channel names such as #data-alerts.
 
     Rules:
         - JSON must be a dictionary
@@ -761,83 +816,71 @@ def send_slack_file(
     logging.info(f"📤 Sending file '{filename}' to Slack channels: {channels}")
 
     slack_hook = SlackHook(slack_conn_id=slack_conn_id)
+    resolved_channel_cache: Dict[str, str] = {}
+
+    def _get_channel_id(channel_ref: str) -> str:
+        if channel_ref not in resolved_channel_cache:
+            resolved_channel_cache[channel_ref] = _resolve_slack_channel_id(channel_ref, slack_hook)
+        return resolved_channel_cache[channel_ref]
 
     # Send to each channel
     results = []
     for channel in channels:
         logging.info(f"Sending to channel: {channel}")
 
+        try:
+            channel_id = _get_channel_id(channel)
+        except ValueError as exc:
+            logging.error("❌ Failed to resolve Slack channel '%s': %s", channel, exc)
+            results.append({"channel": channel, "status": "error", "error": str(exc)})
+            continue
+
         # Determine thread timestamp for this channel
         channel_thread_ts = None
         if thread_ts:
             if isinstance(thread_ts, str):
-                # Single timestamp for all channels
                 channel_thread_ts = thread_ts
             elif isinstance(thread_ts, dict):
-                # Channel-specific timestamp mapping
-                channel_thread_ts = thread_ts.get(channel)
+                channel_thread_ts = thread_ts.get(channel_id) or thread_ts.get(channel)
 
         if channel_thread_ts:
             logging.info(f"Sending file as threaded reply to message {channel_thread_ts}")
 
-        # Use different approach for binary vs text files
+        upload_kwargs: Dict[str, Any] = {
+            "channel": channel_id,
+            "filename": filename,
+            "filetype": filetype,
+        }
+        if initial_comment:
+            upload_kwargs["initial_comment"] = initial_comment
+        if channel_thread_ts:
+            upload_kwargs["thread_ts"] = channel_thread_ts
+
         if isinstance(file_content, bytes):
-            # Binary file upload (XLSX, etc.) - use SlackHook client directly
-            import io
-
-            try:
-                # Use the Slack client directly for binary file uploads
-                response = slack_hook.client.files_upload_v2(
-                    channels=channel,
-                    file=io.BytesIO(file_content),
-                    filename=filename,
-                    initial_comment=initial_comment,
-                    filetype=filetype,
-                    thread_ts=channel_thread_ts,  # Add thread support
-                )
-            except Exception as e:
-                logging.error(f"❌ Failed to upload binary file using client method: {e}")
-                # Fallback: Convert to base64 and try with regular API
-                import base64
-
-                file_content_b64 = base64.b64encode(file_content).decode("utf-8")
-                upload_data = {
-                    "channels": channel,
-                    "content": file_content_b64,
-                    "filename": filename,
-                    "initial_comment": initial_comment,
-                    "filetype": filetype,
-                }
-                if channel_thread_ts:
-                    upload_data["thread_ts"] = channel_thread_ts
-
-                response = slack_hook.call(
-                    api_method="files.upload",
-                    data=upload_data,
-                )
+            upload_kwargs["file"] = io.BytesIO(file_content)
         else:
-            # Text file upload (CSV, TXT, etc.)
-            upload_data = {
-                "channels": channel,
-                "content": file_content,
-                "filename": filename,
-                "initial_comment": initial_comment,
-                "filetype": filetype,
-            }
-            if channel_thread_ts:
-                upload_data["thread_ts"] = channel_thread_ts
+            upload_kwargs["content"] = file_content
 
-            response = slack_hook.call(
-                api_method="files.upload",
-                data=upload_data,
-            )
+        try:
+            response = slack_hook.client.files_upload_v2(**upload_kwargs)
+            if response.get("ok"):
+                logging.info(f"✅ File sent to {channel} ({channel_id}) successfully")
+                results.append({"channel": channel, "channel_id": channel_id, "status": "success"})
+            else:
+                logging.error(f"❌ Failed to send file to {channel} ({channel_id}): {response}")
+                results.append(
+                    {"channel": channel, "channel_id": channel_id, "status": "error", "error": response}
+                )
+        except Exception as exc:
+            logging.error("❌ Failed to upload file to %s (%s): %s", channel, channel_id, exc)
+            results.append({"channel": channel, "channel_id": channel_id, "status": "error", "error": str(exc)})
 
-        if response.get("ok"):
-            logging.info(f"✅ File sent to {channel} successfully")
-            results.append({"channel": channel, "status": "success"})
-        else:
-            logging.error(f"❌ Failed to send file to {channel}: {response}")
-            results.append({"channel": channel, "status": "error", "error": response})
+    errors = [result for result in results if result.get("status") == "error"]
+    if errors:
+        raise RuntimeError(
+            f"Failed to upload '{filename}' to {len(errors)} Slack channel(s): "
+            + "; ".join(f"{entry['channel']} ({entry.get('error')})" for entry in errors)
+        )
 
     return {"results": results}
 
@@ -883,7 +926,16 @@ def send_slack_message_with_blocks(
             logging.info(f"✅ Blocks message sent to {channel} successfully")
             # Include the message timestamp for threading
             message_ts = response.get("ts")
-            results.append({"channel": channel, "status": "success", "ts": message_ts, "response": response})
+            channel_id = response.get("channel")
+            results.append(
+                {
+                    "channel": channel,
+                    "channel_id": channel_id,
+                    "status": "success",
+                    "ts": message_ts,
+                    "response": response,
+                }
+            )
         else:
             logging.error(f"❌ Failed to send blocks message to {channel}: {response}")
             results.append({"channel": channel, "status": "error", "error": response})
@@ -968,11 +1020,15 @@ def send_latency_report_to_slack(
         if violations_count == 0:
             return {"blocks_result": blocks_result}
 
-        thread_timestamps = {
-            entry["channel"]: entry["ts"]
-            for entry in blocks_result.get("results", [])
-            if entry.get("status") == "success" and entry.get("ts")
-        }
+        thread_timestamps: Dict[str, str] = {}
+        for entry in blocks_result.get("results", []):
+            if entry.get("status") != "success" or not entry.get("ts"):
+                continue
+            thread_ts_value = entry["ts"]
+            if entry.get("channel_id"):
+                thread_timestamps[entry["channel_id"]] = thread_ts_value
+            if entry.get("channel"):
+                thread_timestamps[entry["channel"]] = thread_ts_value
 
         if thread_timestamps:
             logging.info("📎 Sending files as threaded replies for channels: %s", list(thread_timestamps.keys()))

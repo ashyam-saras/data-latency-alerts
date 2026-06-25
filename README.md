@@ -113,12 +113,12 @@ The `send_notification` task uses `trigger_rule=ALL_DONE` so it runs even if ups
   "4927|instanthydrati": "C0A87NP1GLR",
   "5363|trueseamoss": "C0AFKSU9Z0V",
   "5622|warmies": "C0AFKSU9Z0V",
-  "5667|homefield": "C0AFKSU9Z0V",
+  "5667|homefield": "C0A6C7C7MLL",
   "default": "C06QY1KQJJG"
 }
 ```
 
-Pattern keys use regex `search` — `4927|instanthydrati` matches any `table_schema` containing `4927` OR `instanthydrati` (handles truncated daton dataset names).
+Pattern keys use case-insensitive regex `search` — `5667|homefield` matches `homefield_5667_prod_raw`, `Homefield_BQ`, etc. The `4927|instanthydrati` pattern matches any `table_schema` containing `4927` OR `instanthydrati` (handles truncated daton dataset names).
 
 ### Airflow Connections
 
@@ -210,5 +210,7 @@ Manual deployment is also available via `workflow_dispatch` with optional bucket
 | `LEFT ANTISEMI JOIN` error | `NOT EXISTS` with `LIKE` condition | Use pre-computed CTE with equality join instead |
 | Staging table not found | `collect_metadata` task failed or didn't run | Check task logs; ensure BigQuery connection has write access to audit dataset |
 | Missing daton/BQ tables | Dataset not matching schema filters | Verify `table_schema` matches `%daton%` or `%BQ%` patterns |
-| Slack routing not working | Pattern doesn't match `table_schema` | Test regex against actual `table_schema` values; use truncated prefixes for daton names |
+| Slack routing not working | Pattern doesn't match `table_schema` | Test regex against actual `table_schema` values (matching is case-insensitive); use truncated prefixes for daton names |
+| `channel_not_found` on file upload | `files_upload_v2` requires channel IDs, not names | Use channel IDs (e.g. `C06QY1KQJJG`) in `LATENCY_ALERTS__SLACK_CHANNELS`; ensure the bot is invited to each channel |
+| `method_deprecated` on file upload | Slack removed legacy `files.upload` | Deploy the latest DAG code, which uses `files_upload_v2` only |
 | Zero violations but tables are stale | Table excluded by labels or ignore list | Check `latency_check_ignore` label and `ignore_latency_tables_list` |
