@@ -8,7 +8,7 @@ This DAG orchestrates data latency monitoring by:
 4. Converting results to XLSX format
 5. Sending appropriate Slack notifications (success or failure) with client-specific routing
 
-The DAG is scheduled to run once daily at 1:00 PM IST.
+The DAG is scheduled to run once daily at 12:00 PM IST.
 
 FEATURES:
 - Rich Slack notifications with professional formatting
@@ -94,7 +94,7 @@ else:
 
 # DAG Configuration
 DAG_ID = "data_latency_alerts"
-SCHEDULE_INTERVAL = "30 7 * * *"  # 1:00 PM IST (7:30 UTC)
+SCHEDULE_INTERVAL = "30 6 * * *"  # 12:00 PM IST (6:30 UTC)
 DEFAULT_ARGS = {
     "owner": "data-engineering",
     "depends_on_past": False,

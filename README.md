@@ -65,7 +65,7 @@ Alerts are routed to client-specific Slack channels using regex pattern matching
 
 ## DAG Workflow
 
-**Schedule**: Daily at 1:00 PM IST (7:30 UTC)
+**Schedule**: Daily at 12:00 PM IST (6:30 UTC)
 
 ```mermaid
 flowchart LR
